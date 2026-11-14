@@ -365,6 +365,29 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
 namespace {
 // gow3 13 Nov 2026: the cache whose driver data is kept on disk, for the save at window close.
 std::atomic<PipelineCache*> g_driver_cache_owner{nullptr};
+
+// gow3 14 Nov 2026 (#58, wall stripes reported only on RTX 4070/5070 Ti): NVIDIA cards with
+// fragment shader barycentrics (Turing and newer) interpolate the guest's attributes in the
+// shader (shadPS4 #1644); older NVIDIA cards, where the stripes were not seen, let the hardware
+// interpolate and keep float-carried integers exact with InterpolatedIntegerPass instead.
+// GOW3_MANUAL_INTERP=0 gives a newer card that second path (A/B test), =1 forces the first where
+// barycentrics exist. The profile changes, so the shader cache of the other setting is kept aside
+// and comes back when the setting does (CheckCacheProfile).
+bool ManualInterpolation(const Instance& instance) {
+    const bool barycentrics = instance.IsFragmentShaderBarycentricSupported();
+    const bool nvidia = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary;
+    const char* env = std::getenv("GOW3_MANUAL_INTERP");
+    const bool manual = barycentrics && (env && env[0] ? env[0] == '1' : nvidia);
+    static std::once_flag reported;
+    std::call_once(reported, [&] {
+        std::printf("GPU: fragment inputs interpolated %s (GOW3_MANUAL_INTERP=%s)\n",
+                    manual ? "in the shader from the three vertices"
+                           : "by the hardware",
+                    env && env[0] ? env : (barycentrics ? "default" : "default, no barycentrics"));
+        std::fflush(stdout);
+    });
+    return manual;
+}
 } // namespace
 
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
@@ -431,14 +454,15 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
             instance_.IsAmdShaderExplicitVertexParameterSupported(),
         .supports_fragment_shader_barycentric = instance_.IsFragmentShaderBarycentricSupported(),
         .supports_shader_subgroup_clock = instance_.IsShaderSubgroupClockSupported(),
-        .needs_manual_interpolation = instance.IsFragmentShaderBarycentricSupported() &&
-                                      instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
-        // gow3: older NVIDIA (Pascal) has no barycentrics; GOW3_INTERP_INT_FIX=0/1 overrides.
+        .needs_manual_interpolation = ManualInterpolation(instance),
+        // gow3: NVIDIA without manual interpolation (Pascal and older: no barycentrics, or
+        // GOW3_MANUAL_INTERP=0) keeps float-carried integers exact; GOW3_INTERP_INT_FIX=0/1
+        // overrides.
         .needs_integer_interpolation_fix = [&] {
             if (const char* env = std::getenv("GOW3_INTERP_INT_FIX")) {
                 return env[0] == '1';
             }
-            return !instance.IsFragmentShaderBarycentricSupported() &&
+            return !ManualInterpolation(instance) &&
                    instance.GetDriverID() == vk::DriverId::eNvidiaProprietary;
         }(),
         // gow3 11 Nov 2026 (as SpartanPort PR #1077): every GPU that cannot run 64-lane waves,
