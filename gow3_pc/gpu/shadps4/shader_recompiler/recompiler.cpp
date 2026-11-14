@@ -39,6 +39,7 @@ IR::BlockList GenerateBlocks(const IR::AbstractSyntaxList& syntax_list) {
 void EmitControlFlowGraph(IR::Program& program, Pools& pools, Gcn::CFG& cfg,
                           RuntimeInfo& runtime_info, const Profile& profile) {
     Gcn::Translator translator{program.info, runtime_info, profile};
+    translator.SetProgram(program.ins_list);
     for (auto& block : cfg) {
         const u32 start = block.begin_index;
         const u32 size = block.end_index - start + 1;
@@ -167,7 +168,7 @@ IR::Program TranslateProgram(const std::span<const u32>& code, Pools& pools, Inf
     Shader::Optimization::SsaRepairPass(program);
     Shader::Optimization::SsaRewritePass(program);
     Shader::Optimization::SharedMemoryBarrierPass(program, runtime_info, profile);
-    if (Shader::Optimization::UniformBarriersOn()) {
+    if (Shader::Optimization::UniformBarriersOn() && info.hw_stage == HwStage::Compute) {
         // Dead exec-mask ballots left in the ifs would make them look unsafe.
         Shader::Optimization::DeadCodeEliminationPass(program);
         Shader::Optimization::UniformBarrierPass(program);

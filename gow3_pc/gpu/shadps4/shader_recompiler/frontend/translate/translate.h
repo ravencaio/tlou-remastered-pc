@@ -67,6 +67,11 @@ public:
 
     void Translate(IR::Block* block, u32 pc, IR::Condition cond,
                    std::span<const GcnInst> inst_list);
+    /// gow3 14 Nov 2026: the whole program, so an instruction can look at the ones after it
+    /// across block boundaries (WaterfallLaneValue).
+    void SetProgram(std::span<const GcnInst> program_insts) {
+        all_insts = program_insts;
+    }
     void TranslateInstruction(const GcnInst& inst);
 
     // Instruction categories
@@ -395,6 +400,8 @@ private:
     const RuntimeInfo& runtime_info;
     const Profile& profile;
     u32 next_vgpr_num;
+    std::span<const GcnInst> all_insts;
+    bool WaterfallLaneValue(const GcnInst& inst) const;
     std::unordered_map<u32, IR::VectorReg> vgpr_map;
     std::array<IR::Attribute, MaxInterpVgpr> vgpr_to_interp{};
     std::optional<FetchShaderData> fetch_data{};

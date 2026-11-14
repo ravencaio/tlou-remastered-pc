@@ -177,7 +177,14 @@ static u32 MapOutputs(std::span<Shader::OutputMap, 3> outputs, const AmdGpu::VsO
 static void FillComputeRuntimeInfo(Shader::RuntimeInfo& info, const AmdGpu::ComputeProgram& cs_pgm,
                                    bool indirect = false) {
     info.props.num_user_data = cs_pgm.settings.num_user_regs;
-    info.props.num_allocated_vgprs = cs_pgm.settings.num_vgprs * 4;
+    // gow3 14 Nov 2026 (#55): the VGPRS field counts blocks of 4 less one, as for the other
+    // stages (ShaderProgram::NumVgprs); "* 4" left out the top 4 registers. The relative register
+    // moves (V_MOVRELS/V_MOVRELD, translated as selects up to this count) then lost writes to them
+    // and read v0 instead, and the translator's scratch registers started on top of them. The
+    // epipolar line set-up of the volumetric lights (cs 462b5273, CS_VolDirectLightBlockInfoCreateOpt,
+    // 72 VGPRs, register arrays up to v68) wrote infinities for a block of lines: a dark wedge
+    // through the light's screen position (with Translator::WaterfallLaneValue, the other cause).
+    info.props.num_allocated_vgprs = (cs_pgm.settings.num_vgprs + 1) * 4;
     info.props.fp_denorm_mode32 = cs_pgm.settings.fp_denorm_mode32;
     info.props.fp_denorm_mode16_64 = cs_pgm.settings.fp_denorm_mode64;
     info.props.fp_round_mode32 = cs_pgm.settings.fp_round_mode32;
@@ -487,12 +494,19 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     // gow3 10 Nov 2026 (WorkgroupSplit, shader_recompiler/runtime_info.h): before any shader is
     // compiled or loaded. GOW3_WORKGROUP_SPLIT=0: off, =1: on for every driver.
     // gow3 11 Nov 2026 (UniformBarrierPass): on Intel's Windows driver; GOW3_UNIFORM_BARRIERS=1/0
-    // forces it. Cached shaders keep how they were built: on Intel the profile (GOW3_RTZ) keeps
-    // its cache apart; use an empty cache folder when changing it.
+    // forces it. 14 Nov 2026 (#55): on NVIDIA too. Pascal ran the prefix sum cs cf1b98a8
+    // (CS_RadialAccumulate, the sun's radial light shafts) right by luck: its barriers count whole
+    // warps. Turing and newer schedule threads independently, so threads that skip a barrier pair
+    // with the next one and the sums race: hard-edged rays and slabs pointing at the sun on RTX
+    // cards (Pittsburgh). Compute metas record the setting (vk_pipeline_serialization.cpp), so
+    // shaders cached the other way compile again once.
     {
         const char* env = std::getenv("GOW3_UNIFORM_BARRIERS");
+        const auto driver = instance.GetDriverID();
         Shader::Optimization::UniformBarriersOn() =
-            env ? env[0] == '1' : instance.GetDriverID() == vk::DriverId::eIntelProprietaryWindows;
+            env ? env[0] == '1'
+                : driver == vk::DriverId::eIntelProprietaryWindows ||
+                      driver == vk::DriverId::eNvidiaProprietary;
     }
     {
         const char* env = std::getenv("GOW3_WORKGROUP_SPLIT");

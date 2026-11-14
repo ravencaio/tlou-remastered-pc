@@ -57,6 +57,11 @@ static constexpr u32 LdsBoundsMagic = 0x42444c47u;
 /// (quarter_grid_pass.cpp). Metas with the first version of the record ("GRSZ") count as having
 /// none.
 static constexpr u32 RenderSizeMagic = 0x32535247u;
+/// gow3 14 Nov 2026 (#55): starts the record of whether a compute shader was translated with
+/// workgroup barriers made uniform (UniformBarrierPass, GOW3_UNIFORM_BARRIERS), "GUB3". Its
+/// presence also marks a compute shader translated with its full VGPR count and with waterfall
+/// loops over a relative register index served per lane (Translator::WaterfallLaneValue).
+static constexpr u32 UniformBarriersMagic = 0x33425547u;
 
 /// gow3: the cache name of a shader's SPIR-V. Shaders that gained multi-wave LDS barriers get a
 /// new name, so binaries cached before the fix are not found and only those shaders recompile.
@@ -974,6 +979,13 @@ void RegisterShaderMeta(const Shader::Info& info,
         tail.Write(Serialization::RenderSizeMagic);
         tail.Write(info.render_size_literals);
     }
+    // UniformBarrierPass (GOW3_UNIFORM_BARRIERS): whether it ran. Last, so earlier builds, which
+    // stop at a record they do not know, still read the ones above.
+    if (info.sw_stage == Shader::SwStage::Compute) {
+        Serialization::Writer tail{ar};
+        tail.Write(Serialization::UniformBarriersMagic);
+        tail.Write(static_cast<u8>(Shader::Optimization::UniformBarriersOn()));
+    }
 
     Storage::DataBase::Instance().Save(Storage::BlobType::ShaderMeta,
                                        fmt::format("{:#018x}", perm_hash), ar.TakeOff());
@@ -1025,8 +1037,8 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
 
     // gow3 10 Nov 2026: the trailing records (RegisterShaderMeta), in any order; zero padding or
     // anything else ends them.
-    bool has_tail = false, has_dma_record = false;
-    u8 eligible = 0, applied = 1, dma_at_compile = 0, lds_bounds = 0;
+    bool has_tail = false, has_dma_record = false, has_uniform_record = false;
+    u8 eligible = 0, applied = 1, dma_at_compile = 0, lds_bounds = 0, uniform_barriers = 0;
     info.render_size_record = false;
     info.render_size_literals = 0;
     while (ar.Remaining() >= sizeof(u32)) {
@@ -1042,6 +1054,9 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
             has_dma_record = true;
         } else if (magic == Serialization::LdsBoundsMagic && ar.Remaining() >= sizeof(u8)) {
             tail.Read(lds_bounds);
+        } else if (magic == Serialization::UniformBarriersMagic && ar.Remaining() >= sizeof(u8)) {
+            tail.Read(uniform_barriers);
+            has_uniform_record = true;
         } else if (magic == Serialization::RenderSizeMagic && ar.Remaining() >= sizeof(u32)) {
             tail.Read(info.render_size_literals);
             info.render_size_record = true;
@@ -1058,6 +1073,14 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     // record) compiles again once (SharedMemoryBoundsPass, GOW3_LDS_BOUNDS).
     if (info.sw_stage == Shader::SwStage::Compute &&
         (lds_bounds != 0) != Shader::Optimization::SharedMemoryBounds(info.pgm_hash)) {
+        return false;
+    }
+    // gow3 14 Nov 2026 (#55): a compute shader translated with UniformBarrierPass the other way
+    // compiles again. Metas from before the record compile again too: they were translated with
+    // 4 VGPRs too few (FillComputeRuntimeInfo), which the permutation key cannot tell apart.
+    if (info.sw_stage == Shader::SwStage::Compute &&
+        (!has_uniform_record ||
+         (uniform_barriers != 0) != Shader::Optimization::UniformBarriersOn())) {
         return false;
     }
 

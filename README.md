@@ -70,7 +70,7 @@ that is not fixed yet (a workaround is under Known issues), and with rough edges
     - a 90-thread prefix sum (cs `cf1b98a8`) has workgroup barriers inside an `if` that differs
       between threads; on the PS4 every wave still runs them, Intel's driver waits forever. Such
       ifs now run for every thread, their LDS writes still following the condition
-      (`GOW3_UNIFORM_BARRIERS`);
+      (`GOW3_UNIFORM_BARRIERS`; on NVIDIA too since #55, below);
     - large textures were converted with more work groups per dispatch than Intel allows
       (Vulkan validation error), now in pieces; depth/colour copies through a buffer (Intel has
       no `VK_KHR_maintenance8`) copy every level instead of stopping the game;
@@ -82,6 +82,23 @@ that is not fixed yet (a workaround is under Known issues), and with rough edges
     where all 3 lost it before). With these changes an Intel Arc card was reported to run well,
     with no crash in the session played. The shader cache is rebuilt once on such a GPU. Three cloth shaders still have barriers in such ifs, inside loops (`106beafd`,
     `e44070db`, `20c1dc43`); they did not hang it in the replays tried.
+  - Volumetric light with hard edges: sun rays with bright streaks pointing at the sun on RTX
+    cards, clearest in photo mode at the start of Pittsburgh, and dark wedges across the screen
+    ([#55](https://github.com/ravencaio/tlou-remastered-pc/issues/55)). The game averages its
+    radial light shafts with a prefix sum (`CS_RadialAccumulate`, cs `cf1b98a8`) whose workgroup
+    barriers sit inside an `if` that differs between threads, as on Intel above. GTX 10 series
+    cards happened to get it right; Turing and newer let threads that skip a barrier meet the
+    next one, so the sums raced. Those ifs now run for every thread on NVIDIA too
+    (`GOW3_UNIFORM_BARRIERS=0` goes back). On NVIDIA cards of every generation, dark or bright wedges through the screen position of a
+    volumetric light swept the screen as the camera moved (seen at night in the suburbs). The
+    shaders that set up the light's sampling lines (`CS_VolDirectLightBlockInfoCreateOpt`, cs
+    `462b5273`, and the line samplers `05866787`, `bb1d430e`) keep arrays in registers, picked
+    with a loop that serves the GPU's lanes one index at a time. Two faults there: compute
+    shaders were given 4 registers fewer than they allocate, so the arrays lost their top
+    elements and a block of lines got infinities; and on NVIDIA's 32-lane groups those loops left
+    the last lanes of a group unserved, so a block of lines missed the light's volume. Each lane
+    now uses its own index in such loops (same result, `GOW3_WATERFALL_LANES=0` goes back), and
+    compute shaders get their full register count. Compute shaders compile again once.
   - A thin light or dark outline where the soft shadows of characters and vehicles meet the
     ground ([#5](https://github.com/ravencaio/tlou-remastered-pc/issues/5),
     [#66](https://github.com/ravencaio/tlou-remastered-pc/issues/66)). Until 0.2.1 it was much

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include "shader_recompiler/frontend/translate/translate.h"
 #include "shader_recompiler/ir/reg.h"
 #include "shader_recompiler/runtime_info.h"
@@ -97,8 +98,59 @@ void Translator::EmitDataShare(const GcnInst& inst) {
 
 // VOP2
 
+// gow3 14 Nov 2026 (#55): a waterfall loop over a relative register index:
+//   s = v_readfirstlane(v); v_cmpx_eq_u32(s, v); [...] s_mov_b32 m0, s; v_movrels/v_movreld ...;
+//   exec &= ~those lanes; repeat while any lane is left.
+// Each pass serves the lanes whose v equals the first lane's, so for every lane that goes on
+// s == v: the lane's own value gives the same result, all lanes in one pass and without subgroup
+// operations. On NVIDIA's 32-lane subgroups those loops, nested in other loops in the volumetric
+// lights' line set-up (cs 462b5273, 05866787, bb1d430e), left the last lanes of a 32-lane group
+// unserved: a block of sampling lines missed the light's volume and drew a wedge through the
+// light (bright or dark) that swept the screen as the camera moved. Only this shape (m0 within
+// four instructions of the compare) is changed: a readfirstlane that picks a descriptor must
+// stay uniform. GOW3_WATERFALL_LANES=0: the subgroup version everywhere.
+bool Translator::WaterfallLaneValue(const GcnInst& inst) const {
+    static const bool on = [] {
+        const char* env = std::getenv("GOW3_WATERFALL_LANES");
+        return !env || env[0] != '0';
+    }();
+    if (!on || all_insts.empty() || inst.dst[0].field != OperandField::ScalarGPR ||
+        inst.src[0].field != OperandField::VectorGPR) {
+        return false;
+    }
+    const GcnInst* const begin = all_insts.data();
+    const GcnInst* const end = begin + all_insts.size();
+    const GcnInst* const self = &inst;
+    if (self < begin || self + 1 >= end) {
+        return false;
+    }
+    const auto is = [](const InstOperand& op, OperandField field, u32 code) {
+        return op.field == field && op.code == code;
+    };
+    const u32 sgpr = inst.dst[0].code;
+    const u32 vgpr = inst.src[0].code;
+    const GcnInst& cmp = self[1];
+    if (cmp.opcode != Opcode::V_CMPX_EQ_U32 ||
+        !((is(cmp.src[0], OperandField::ScalarGPR, sgpr) &&
+           is(cmp.src[1], OperandField::VectorGPR, vgpr)) ||
+          (is(cmp.src[1], OperandField::ScalarGPR, sgpr) &&
+           is(cmp.src[0], OperandField::VectorGPR, vgpr)))) {
+        return false;
+    }
+    for (const GcnInst* next = self + 2; next < end && next <= self + 5; ++next) {
+        if (next->opcode == Opcode::S_MOV_B32 && next->dst[0].field == OperandField::M0) {
+            return is(next->src[0], OperandField::ScalarGPR, sgpr);
+        }
+    }
+    return false;
+}
+
 void Translator::V_READFIRSTLANE_B32(const GcnInst& inst) {
     const IR::U32 value{GetSrc(inst.src[0])};
+    if (WaterfallLaneValue(inst)) {
+        SetDst(inst.dst[0], value);
+        return;
+    }
     SetDst(inst.dst[0], ir.ReadFirstLane(value,ir.GetExec()));
 }
 
