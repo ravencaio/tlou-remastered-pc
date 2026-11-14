@@ -12,6 +12,11 @@ game_out=$2
 icon=${3:-}
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
+# windres preprocesses through a temporary file. MSYS2's bash started from Git Bash has no
+# TMP/TEMP, and without them it stopped with "Unable to create temp file".
+TMP=$(cygpath -w "$work")
+TEMP=$TMP
+export TMP TEMP
 
 version=$(tr -d '\r\n' < "$here/../tools/VERSION")
 IFS=. read -r major minor patch <<< "$version"
