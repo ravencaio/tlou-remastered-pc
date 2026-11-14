@@ -9,13 +9,17 @@
 // buttons and the d-pad are recognised by the hash of their first mip and redrawn the same way,
 // the bound key in place of the PlayStation symbol (re-encoded to BC1 here). A device switch
 // invalidates them, and they upload again at their next use. runtime_pad.c picks the device
-// (GOW3_PROMPTS); GOW3_PROMPTS_LOG=1 logs the hash of each candidate upload: The Last of Us
-// Remastered's atlas and pictures are still to be added to known_textures that way.
+// (GOW3_PROMPTS); GOW3_PROMPTS_LOG=1 logs the hash of each candidate upload. The Last of Us
+// Remastered's 256x512 atlas is redrawn the same way. Its world prompts and menu tabs come from one
+// HUD sprite shader whose textures change every session: those draws are recognised by their quad
+// (ClassifyQuad) and get the redrawn atlas cell bound instead.
 
 #include "gow3_prompts.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -31,7 +35,13 @@
 #include "../gow3gpu.h"
 #ifndef GOW3_PROMPTS_TEST
 #include "core/memory.h"
+#include "video_core/amdgpu/resource.h"
+#include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/texture_cache/image.h"
 #endif
 
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -44,6 +54,8 @@ namespace Gow3Prompts {
 namespace {
 
 constexpr int Size = 512;
+constexpr u32 TlouAtlasWidth = 256, TlouAtlasHeight = 512;
+constexpr u64 TlouAtlasHash = 0xcc7e9c9744cf4e67ULL;
 
 // The textures by the XXH3 hash of their first mip's guest data (1D-tiled): the symbol font atlases
 // (512x512 RGBA8, or colour and alpha apart) and the button pictures (BC1 with mips, found by
@@ -102,6 +114,39 @@ constexpr Plan plans[] = {
     {10, Draw::Stick, GOW3_PROMPT_LS_UP},    {15, Draw::Stick, GOW3_PROMPT_LS_UP},
     {45, Draw::Stick, GOW3_PROMPT_LS_UP},    {16, Draw::Stick, GOW3_PROMPT_RS_UP},
     {46, Draw::Stick, GOW3_PROMPT_RS_UP},
+};
+
+// The Last of Us Remastered's symbol atlas (256x512): each glyph's cell, from symbol3.fnt or its pixels plus 2.
+constexpr Cell tlou_cells[] = {
+    {101, 3, 3, 70, 70},    {102, 78, 2, 71, 70},   {103, 153, 2, 71, 71},  {104, 3, 77, 71, 70},
+    {105, 78, 77, 71, 71},  {106, 157, 81, 53, 52}, {107, 192, 144, 64, 54}, {108, 6, 156, 53, 52},
+    {109, 70, 156, 53, 52}, {110, 135, 157, 52, 52}, {111, 1, 216, 71, 55},  {112, 76, 216, 71, 56},
+    {113, 150, 217, 55, 54}, {114, 2, 275, 55, 54}, {117, 170, 272, 56, 55}, {118, 0, 330, 56, 55},
+    {122, 140, 383, 74, 53}, {124, 61, 389, 76, 47}, {125, 0, 440, 55, 43},  {126, 55, 440, 55, 43},
+};
+
+// Its d-pad drawings: none, left and right, up and down, up, down lit.
+constexpr Plan tlou_plans[] = {
+    {101, Draw::Dpad},
+    {102, Draw::Pair, GOW3_PROMPT_LEFT, GOW3_PROMPT_RIGHT},
+    {103, Draw::Pair, GOW3_PROMPT_UP, GOW3_PROMPT_DOWN},
+    {104, Draw::Key, GOW3_PROMPT_UP},
+    {105, Draw::Key, GOW3_PROMPT_DOWN},
+    {106, Draw::Key, GOW3_PROMPT_CIRCLE},
+    {107, Draw::Key, GOW3_PROMPT_OPTIONS},
+    {108, Draw::Key, GOW3_PROMPT_SQUARE},
+    {109, Draw::Key, GOW3_PROMPT_TRIANGLE},
+    {110, Draw::Key, GOW3_PROMPT_CROSS},
+    {111, Draw::Stick, GOW3_PROMPT_LS_UP},
+    {112, Draw::Stick, GOW3_PROMPT_RS_UP},
+    {113, Draw::Key, GOW3_PROMPT_L3},
+    {114, Draw::Key, GOW3_PROMPT_R3},
+    {117, Draw::Key, GOW3_PROMPT_R2},
+    {118, Draw::Key, GOW3_PROMPT_L2},
+    {122, Draw::Stick, GOW3_PROMPT_LS_UP},
+    {124, Draw::Key, GOW3_PROMPT_TOUCHPAD},
+    {125, Draw::Key, GOW3_PROMPT_R1},
+    {126, Draw::Key, GOW3_PROMPT_L1},
 };
 
 struct Rgb {
@@ -609,7 +654,9 @@ void DrawPlan(Canvas& canvas, const Plan& plan, const Cell& c, const Labels& lab
         }
         break;
     case Draw::Stick:
-        if (label(plan.a).empty()) {
+        if (label(plan.a).empty() || (MousePartOf(label(plan.a)) == MousePart::None &&
+                                      (label(plan.a + 1).empty() || label(plan.a + 2).empty() ||
+                                       label(plan.a + 3).empty()))) {
             return;
         }
         break;
@@ -653,10 +700,11 @@ void DrawPlan(Canvas& canvas, const Plan& plan, const Cell& c, const Labels& lab
     }
 }
 
-std::shared_ptr<const Canvas> Render(const Labels& labels) {
-    auto canvas = std::make_shared<Canvas>();
-    for (const Plan& plan : plans) {
-        for (const Cell& cell : cells) {
+template <size_t P, size_t C>
+std::shared_ptr<const Canvas> RenderCells(const Labels& labels, std::shared_ptr<Canvas> canvas,
+                                          const Plan (&plan_list)[P], const Cell (&cell_list)[C]) {
+    for (const Plan& plan : plan_list) {
+        for (const Cell& cell : cell_list) {
             if (cell.id == plan.id) {
                 DrawPlan(*canvas, plan, cell, labels);
             }
@@ -665,23 +713,35 @@ std::shared_ptr<const Canvas> Render(const Labels& labels) {
     return canvas;
 }
 
+std::shared_ptr<const Canvas> Render(const Labels& labels) {
+    return RenderCells(labels, std::make_shared<Canvas>(), plans, cells);
+}
+
+std::shared_ptr<const Canvas> RenderTlou(const Labels& labels) {
+    const size_t texels = size_t(TlouAtlasWidth) * TlouAtlasHeight;
+    auto canvas = std::make_shared<Canvas>(Canvas{int(TlouAtlasWidth), int(TlouAtlasHeight),
+                                                  std::vector<float>(texels * 4, 0.0f), std::vector<u8>(texels, 0)});
+    return RenderCells(labels, std::move(canvas), tlou_plans, tlou_cells);
+}
+
 // The redrawn cells over the guest's atlas (1D-tiled: 8x8 tiles in rows, Z order inside).
 std::vector<u8> Compose(const Canvas& canvas, const u8* guest, Kind kind) {
-    std::vector<u8> out(Size * Size * 4);
-    for (int y = 0; y < Size; ++y) {
-        for (int x = 0; x < Size; ++x) {
+    const int width = canvas.w, height = canvas.h;
+    std::vector<u8> out(size_t(width) * height * 4);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
             u32 element = 0;
             for (int b = 0; b < 3; ++b) {
                 element |= ((x >> b) & 1) << (2 * b);
                 element |= ((y >> b) & 1) << (2 * b + 1);
             }
-            const u32 tile = (y / 8) * (Size / 8) + x / 8;
-            u8* o = &out[(y * Size + x) * 4];
+            const u32 tile = (y / 8) * (width / 8) + x / 8;
+            u8* o = &out[(y * width + x) * 4];
             std::memcpy(o, guest + (tile * 64 + element) * 4, 4);
-            if (!canvas.drawn[y * Size + x]) {
+            if (!canvas.drawn[y * width + x]) {
                 continue;
             }
-            const float* t = &canvas.texels[(y * Size + x) * 4];
+            const float* t = &canvas.texels[(y * width + x) * 4];
             const float a = t[3];
             // Transparent texels take the glow colour: filtering at the edges blends towards it.
             const Rgb c = a > 1e-4f ? Rgb{t[0] / a, t[1] / a, t[2] / a} : glow;
@@ -1152,6 +1212,7 @@ struct State {
     std::mutex mutex;
     u64 generation[Sets]{};
     std::shared_ptr<const Canvas> canvas[Sets];
+    std::shared_ptr<const Canvas> tlou_canvas[Sets];
     Labels labels[Sets];
     struct Output {
         u64 generation;
@@ -1166,6 +1227,11 @@ State& GetState() {
     return state;
 }
 std::atomic<int> device{0}; // 0 the game's PlayStation icons, 1 keyboard and mouse, 2 other controller
+std::atomic<u32> s_memo_generation{0}; // a change: the recognised floating prompts are forgotten
+
+void ClearFloatingPromptMemo() {
+    s_memo_generation.fetch_add(1, std::memory_order_relaxed);
+}
 
 void InvalidateSeen() {
     std::vector<std::pair<VAddr, u32>> seen;
@@ -1222,10 +1288,21 @@ std::shared_ptr<const Texels> Replacement(VAddr address, u32 guest_size, u32 mip
         return env && env[0] == '1';
     }();
     const bool atlas = !bc1 && width == Size && height == Size && levels == 1 && mip0_size == Size * Size * 4;
+    const bool tlou_atlas = !bc1 && width == TlouAtlasWidth && height == TlouAtlasHeight && levels == 1 &&
+                            mip0_size == TlouAtlasWidth * TlouAtlasHeight * 4;
     const auto side = [](u32 v) { return v >= 64 && v <= 512 && (v & (v - 1)) == 0; };
     // Redrawn pictures are 1D-tiled (tile mode 13: their mip 0 is width * height / 2 bytes).
     const bool picture = bc1 && side(width) && side(height) && mip0_size == width * height / 2;
-    if (!atlas && !picture) {
+    if (!atlas && !picture && !tlou_atlas) {
+        return nullptr;
+    }
+    if (tlou_atlas && SetOf(device.load(std::memory_order_relaxed)) < 0 && !log) {
+        // PlayStation icons: no hash; a switch to other icons uploads it again.
+        auto& state = GetState();
+        std::scoped_lock lock{state.mutex};
+        if (std::find(state.seen.begin(), state.seen.end(), std::pair{address, guest_size}) == state.seen.end()) {
+            state.seen.emplace_back(address, guest_size);
+        }
         return nullptr;
     }
     const u8* guest = reinterpret_cast<const u8*>(address);
@@ -1263,6 +1340,28 @@ std::shared_ptr<const Texels> Replacement(VAddr address, u32 guest_size, u32 mip
                     bc1 ? "BC1" : "RGBA8", tile_mode, static_cast<unsigned long long>(address),
                     static_cast<unsigned long long>(hash), known ? ": " : "", known ? known->name : "");
         std::fflush(stdout);
+    }
+    if (tlou_atlas) {
+        if (hash != TlouAtlasHash) {
+            return nullptr;
+        }
+        if (std::find(state.seen.begin(), state.seen.end(), std::pair{address, guest_size}) == state.seen.end()) {
+            state.seen.emplace_back(address, guest_size);
+        }
+        const int set = SetOf(device.load(std::memory_order_relaxed));
+        if (set < 0 || !state.tlou_canvas[set]) {
+            return nullptr;
+        }
+        auto& output = state.outputs[set][hash];
+        if (!output.texels || output.generation != state.generation[set]) {
+            auto atlas_texels = std::make_shared<Texels>();
+            atlas_texels->data = Compose(*state.tlou_canvas[set], guest, Kind::Rgba);
+            atlas_texels->mips.push_back({0, TlouAtlasWidth, TlouAtlasHeight});
+            output = {state.generation[set], std::move(atlas_texels)};
+            std::printf("Prompts: %s icons in the Last of Us atlas\n", set == 0 ? "keyboard and mouse" : "controller");
+            std::fflush(stdout);
+        }
+        return output.texels;
     }
     if (!known || (picture && tile_mode != 13)) {
         return nullptr;
@@ -1302,6 +1401,414 @@ std::shared_ptr<const Texels> Replacement(VAddr address, u32 guest_size, u32 mip
     return output.texels;
 }
 
+// A quad of the HUD sprite shader: centre and size in pixels of a W x H viewport, and its colour factor.
+struct PromptQuad {
+    float cx, cy, w, h, W, H;
+    float r, g, b, a;
+};
+
+// The button a prompt quad shows (GOW3_PROMPT_*), or -1. Measured at 1920x1080; sizes and distances
+// from the canvas edges are in canvas heights. World prompts can be outside the canvas on a wider display.
+// near_world_prompt: a world prompt was drawn close by just before (an NPC talk badge, not a grab).
+int ClassifyQuad(const PromptQuad& q, bool near_world_prompt) {
+    const float size_w = q.w / q.H, size_h = q.h / q.H;
+    const float left = q.cx / q.H, right = (q.W - q.cx) / q.H, top = q.cy / q.H;
+    const auto sized = [&](float lo, float hi) {
+        return size_w >= lo && size_w <= hi && size_h >= lo && size_h <= hi;
+    };
+    const auto mono = [&](float tolerance) {
+        return std::fabs(q.r - q.g) < tolerance && std::fabs(q.g - q.b) < tolerance && q.a > 0.01f;
+    };
+    // Backpack and crafting tabs: grey quads at the top, L1 the left one.
+    if (sized(0.070f, 0.110f) && top >= 0.06f && top <= 0.20f && mono(0.10f)) {
+        return right > 0.569f ? GOW3_PROMPT_L1 : GOW3_PROMPT_R1;
+    }
+    const bool low = top > 0.70f;
+    const bool white = q.r > 0.55f && q.g > 0.55f && q.b > 0.55f && mono(0.12f);
+    if (low && left > 0 && left < 0.444f && sized(0.020f, 0.200f) && mono(0.12f)) {
+        return GOW3_PROMPT_L3; // the hint prompt: it pulses in size and brightness
+    }
+    if (sized(0.015f, 0.070f) && white) { // world prompts grow from small as they fade in
+        const bool widget = right > 0 && ((low && right < 0.356f) || (top >= 0.06f && top <= 0.20f && right < 0.8f));
+        return widget ? -1 : GOW3_PROMPT_TRIANGLE;
+    }
+    // Grabs and struggles: a larger quad in the middle of the screen.
+    if (sized(0.080f, 0.160f) && std::fabs(q.cx - q.W / 2) / q.H < 0.267f && top > 0.40f && top < 0.70f &&
+        mono(0.15f) && !near_world_prompt) {
+        return GOW3_PROMPT_SQUARE;
+    }
+    return -1;
+}
+
+// Prompts already recognised (render thread only). A prompt that fades in or pulses leaves the
+// rules' sizes: it keeps its button by its texture (up to 2.5 times the size), or by its place for StickyMs.
+class PromptMemory {
+public:
+    int Resolve(const PromptQuad& q, VAddr address, u64 hash, int button, s64 now_ms) {
+        const float x = q.cx / q.H, y = q.cy / q.H, size = std::max(q.w, q.h) / q.H;
+        Entry* found = nullptr;
+        for (Entry& e : entries) {
+            const bool same_texture = e.address == address && e.hash == hash;
+            const bool near_place = now_ms - e.seen_ms < StickyMs && std::hypot(x - e.x, y - e.y) < 0.05f;
+            if (button >= 0 ? same_texture && e.button == button
+                            : size < 2.5f * e.size && (same_texture || (near_place && size > 0.4f * e.size))) {
+                found = &e;
+                break;
+            }
+        }
+        if (button < 0) {
+            if (!found) {
+                return -1;
+            }
+            found->x = x, found->y = y, found->seen_ms = now_ms;
+            return found->button;
+        }
+        if (!found) {
+            if (entries.size() < Capacity) {
+                found = &entries.emplace_back();
+            } else {
+                found = &*std::min_element(entries.begin(), entries.end(),
+                                           [](const Entry& a, const Entry& b) { return a.seen_ms < b.seen_ms; });
+            }
+        }
+        *found = {address, hash, button, x, y, size, now_ms};
+        return button;
+    }
+    void Clear() {
+        entries.clear();
+    }
+    bool Empty() const {
+        return entries.empty();
+    }
+
+private:
+    static constexpr size_t Capacity = 32;
+    static constexpr s64 StickyMs = 300;
+    struct Entry {
+        VAddr address;
+        u64 hash;
+        int button;
+        float x, y, size; // in screen heights, as last seen (size: as the rules last matched it)
+        s64 seen_ms;
+    };
+    std::vector<Entry> entries;
+};
+
+// The button's TLOU atlas cell, redrawn for the set and scaled into a 128x128 RGBA8 image (stored
+// upside down). Empty when the set has no drawing for it: the game's own icon stays.
+static std::vector<u8> GenerateFloatingPrompt(int button, int set) {
+    constexpr int OutSize = 128;
+    constexpr int TargetSize = 68;
+    const Cell* cell = nullptr;
+    for (const auto& plan : tlou_plans) {
+        if (plan.a == button && plan.draw == Draw::Key) {
+            for (const auto& c : tlou_cells) {
+                if (c.id == plan.id) {
+                    cell = &c;
+                }
+            }
+            break;
+        }
+    }
+    std::shared_ptr<const Canvas> canvas;
+    {
+        auto& state = GetState();
+        std::scoped_lock lock{state.mutex};
+        if (state.labels[set].size() > size_t(button) && !state.labels[set][button].empty()) {
+            canvas = state.tlou_canvas[set];
+        }
+    }
+    if (!cell || !canvas) {
+        return {};
+    }
+    const int atlas_w = int(TlouAtlasWidth);
+    const auto texel = [&](int x, int y) -> std::array<float, 4> {
+        const float* t = &canvas->texels[(y * atlas_w + x) * 4];
+        if (!canvas->drawn[y * atlas_w + x] || t[3] <= 1e-4f) {
+            return {0.f, 0.f, 0.f, 0.f};
+        }
+        return {t[0] / t[3] * 255.0f, t[1] / t[3] * 255.0f, t[2] / t[3] * 255.0f, t[3] * 255.0f};
+    };
+    const float scale = float(TargetSize) / float(std::max(cell->w, cell->h));
+    std::vector<u8> out(OutSize * OutSize * 4, 0);
+    bool any = false;
+    for (int dy = 0; dy < OutSize; ++dy) {
+        for (int dx = 0; dx < OutSize; ++dx) {
+            const float sx = (dx - OutSize * 0.5f + 0.5f) / scale + (cell->x + cell->w * 0.5f);
+            const float sy = (dy - OutSize * 0.5f + 0.5f) / scale + (cell->y + cell->h * 0.5f);
+            if (sx < cell->x || sx >= cell->x + cell->w || sy < cell->y || sy >= cell->y + cell->h) {
+                continue;
+            }
+            const int x0 = int(sx), y0 = int(sy);
+            const int x1 = std::min(x0 + 1, cell->x + cell->w - 1);
+            const int y1 = std::min(y0 + 1, cell->y + cell->h - 1);
+            const float fx = sx - x0, fy = sy - y0;
+            const auto p00 = texel(x0, y0), p10 = texel(x1, y0), p01 = texel(x0, y1), p11 = texel(x1, y1);
+            u8* dst = &out[((OutSize - 1 - dy) * OutSize + dx) * 4];
+            for (int c = 0; c < 4; ++c) {
+                const float v = (p00[c] * (1 - fx) + p10[c] * fx) * (1 - fy) + (p01[c] * (1 - fx) + p11[c] * fx) * fy;
+                dst[c] = u8(std::clamp(v + 0.5f, 0.0f, 255.0f));
+            }
+            any = any || dst[3];
+        }
+    }
+    if (!any) {
+        return {};
+    }
+    return out;
+}
+
+#ifndef GOW3_PROMPTS_TEST
+struct ButtonGpu {
+    VideoCore::UniqueImage image;
+    vk::UniqueImageView color_view;
+    vk::UniqueImageView alpha_view;
+    int device = -1;
+    u64 generation = ~0ull;
+    bool none = false; // no drawing for this device and generation: the game's icon stays
+};
+static std::array<ButtonGpu, GOW3_PROMPT_COUNT> s_prompt_buttons;
+
+bool BindFloatingPrompt(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
+                        Vulkan::Runtime& runtime, void* p_img0_info, void* p_img1_info,
+                        int button) {
+    const int cur_dev = device.load(std::memory_order_relaxed);
+    const int set = SetOf(cur_dev);
+    if (set < 0 || button < 0 || button >= GOW3_PROMPT_COUNT) {
+        return false;
+    }
+
+    u64 gen;
+    {
+        auto& state = GetState();
+        std::scoped_lock lock{state.mutex};
+        gen = state.generation[set];
+    }
+    auto& b_gpu = s_prompt_buttons[button];
+    const bool current = b_gpu.device == cur_dev && b_gpu.generation == gen;
+    if (current && b_gpu.none) {
+        return false;
+    }
+    if (!b_gpu.image || !current) {
+        auto pixels = GenerateFloatingPrompt(button, set);
+        b_gpu.none = pixels.empty();
+        if (b_gpu.none) {
+            b_gpu.device = cur_dev;
+            b_gpu.generation = gen;
+            return false;
+        }
+
+        vk::Device dev = instance.GetDevice();
+        const bool is_new = !b_gpu.image;
+        if (is_new) {
+            b_gpu.image = VideoCore::UniqueImage(dev, instance.GetAllocator());
+            b_gpu.image.Create(vk::ImageCreateInfo{
+                .imageType = vk::ImageType::e2D,
+                .format = vk::Format::eR8G8B8A8Unorm,
+                .extent = {128, 128, 1},
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = vk::SampleCountFlagBits::e1,
+                .tiling = vk::ImageTiling::eOptimal,
+                .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+                .initialLayout = vk::ImageLayout::eUndefined,
+            });
+            b_gpu.color_view = Vulkan::Check(dev.createImageViewUnique({
+                .image = vk::Image(b_gpu.image),
+                .viewType = vk::ImageViewType::e2D,
+                .format = vk::Format::eR8G8B8A8Unorm,
+                .components = {
+                    vk::ComponentSwizzle::eIdentity,
+                    vk::ComponentSwizzle::eIdentity,
+                    vk::ComponentSwizzle::eIdentity,
+                    vk::ComponentSwizzle::eIdentity,
+                },
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            }));
+            b_gpu.alpha_view = Vulkan::Check(dev.createImageViewUnique({
+                .image = vk::Image(b_gpu.image),
+                .viewType = vk::ImageViewType::e2D,
+                .format = vk::Format::eR8G8B8A8Unorm,
+                .components = {
+                    vk::ComponentSwizzle::eA,
+                    vk::ComponentSwizzle::eA,
+                    vk::ComponentSwizzle::eA,
+                    vk::ComponentSwizzle::eA,
+                },
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            }));
+        }
+
+        const auto staging = runtime.GetStagingPool().Request(128 * 128 * 4, VideoCore::MemoryType::HostUncached, 16);
+        std::memcpy(staging.mapped, pixels.data(), 128 * 128 * 4);
+        staging.Flush();
+
+        const vk::BufferImageCopy copy_region{
+            .bufferOffset = staging.offset,
+            .bufferRowLength = 128,
+            .bufferImageHeight = 128,
+            .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .imageOffset = {0, 0, 0},
+            .imageExtent = {128, 128, 1},
+        };
+
+        scheduler.EndRendering();
+        scheduler.Record([src_handle = staging.buffer->Handle(), dst_image = vk::Image(b_gpu.image), copy_region, is_new](vk::CommandBuffer cmdbuf) {
+            const vk::ImageMemoryBarrier2 pre_barrier{
+                .srcStageMask = is_new ? vk::PipelineStageFlagBits2::eAllCommands : vk::PipelineStageFlagBits2::eFragmentShader,
+                .srcAccessMask = is_new ? vk::AccessFlagBits2::eNone : vk::AccessFlagBits2::eShaderRead,
+                .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
+                .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .oldLayout = is_new ? vk::ImageLayout::eUndefined : vk::ImageLayout::eShaderReadOnlyOptimal,
+                .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                .image = dst_image,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            };
+            cmdbuf.pipelineBarrier2(vk::DependencyInfo{
+                .imageMemoryBarrierCount = 1u,
+                .pImageMemoryBarriers = &pre_barrier,
+            });
+            cmdbuf.copyBufferToImage(src_handle, dst_image, vk::ImageLayout::eTransferDstOptimal, copy_region);
+            const vk::ImageMemoryBarrier2 post_barrier{
+                .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
+                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .image = dst_image,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            };
+            cmdbuf.pipelineBarrier2(vk::DependencyInfo{
+                .imageMemoryBarrierCount = 1u,
+                .pImageMemoryBarriers = &post_barrier,
+            });
+        });
+
+        b_gpu.device = cur_dev;
+        b_gpu.generation = gen;
+    }
+
+    auto* img0 = static_cast<vk::DescriptorImageInfo*>(p_img0_info);
+    auto* img1 = static_cast<vk::DescriptorImageInfo*>(p_img1_info);
+    img0->imageView = *b_gpu.color_view;
+    img0->imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    img1->imageView = *b_gpu.alpha_view;
+    img1->imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    return true;
+}
+
+// The draw's first quad from guest memory: u16 or u32 indices, PromptVertexStride-byte vertices
+// with the clip-space position in floats 0-1 and the colour factor in floats 8-11.
+static bool ReadPromptQuad(const PromptGeometry& geom, Core::MemoryManager* memory, PromptQuad& q) {
+    if (!memory || geom.num_indices < 6 || !geom.ib_addr || !geom.vb_addr) {
+        return false;
+    }
+    u32 idx[6];
+    if (geom.is_index16) {
+        u16 raw[6];
+        if (!memory->TryReadBacking(geom.ib_addr, raw, sizeof(raw))) {
+            return false;
+        }
+        std::copy(raw, raw + 6, idx);
+    } else if (!memory->TryReadBacking(geom.ib_addr, idx, sizeof(idx))) {
+        return false;
+    }
+    u32 vi[4];
+    int unique = 0;
+    for (const u32 i : idx) {
+        if (std::find(vi, vi + unique, i) != vi + unique) {
+            continue;
+        }
+        if (unique == 4) {
+            return false;
+        }
+        vi[unique++] = i;
+    }
+    if (unique != 4) {
+        return false;
+    }
+    float v[4][PromptVertexStride / 4];
+    for (int i = 0; i < 4; ++i) {
+        if (!memory->TryReadBacking(geom.vb_addr + u64(vi[i]) * PromptVertexStride, v[i], sizeof(v[i]))) {
+            return false;
+        }
+    }
+    // In the interface's 16:9 canvas, whatever the render target's width (the render scale changes
+    // it). On a wider display (GOW3_DISPLAY_ASPECT, runtime_hud.c) the canvas is the middle 16:9.
+    static const float ratio = [] {
+        int w = 0, h = 0;
+        const char* env = std::getenv("GOW3_DISPLAY_ASPECT");
+        return env && std::sscanf(env, "%dx%d", &w, &h) == 2 && w > 0 && h > 0 ? float(w) / float(h) * 9.0f / 16.0f
+                                                                                : 1.0f;
+    }();
+    const float H = geom.viewport_h, W = H * 16.0f / 9.0f;
+    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+    for (const auto& vertex : v) {
+        const float x = (vertex[0] * ratio * 0.5f + 0.5f) * W, y = (0.5f - vertex[1] * 0.5f) * H;
+        x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+    }
+    q = {(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, W, H, v[0][8], v[0][9], v[0][10], v[0][11]};
+    return true;
+}
+
+bool FloatingPromptsActive() {
+    return SetOf(device.load(std::memory_order_relaxed)) >= 0;
+}
+
+int IdentifyFloatingPrompt(const AmdGpu::Image& s0, const AmdGpu::Image& s1, Core::MemoryManager* memory,
+                           const PromptGeometry& geom) {
+    if (s0.width != 127 || s0.height != 127 || s0.data_format != 35 || s1.width != 127 || s1.height != 127 ||
+        s1.data_format != 38) {
+        return -1;
+    }
+    PromptQuad q;
+    if (!ReadPromptQuad(geom, memory, q)) {
+        return -1;
+    }
+    // Render thread only: the last world prompt (an NPC talk badge next to it is not a grab) and
+    // the recognised prompts, forgotten when the device or the labels change.
+    static float last_x = -1e9f, last_y = -1e9f;
+    static s64 last_ms = -1000;
+    static PromptMemory recognised;
+    static u32 memory_generation = 0;
+    if (const u32 generation = s_memo_generation.load(std::memory_order_relaxed); generation != memory_generation) {
+        memory_generation = generation;
+        recognised.Clear();
+    }
+    const s64 now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch()).count();
+    const bool close_by = now_ms - last_ms < 200 && std::hypot(q.cx - last_x, q.cy - last_y) < 0.23f * q.H;
+    const int rule = ClassifyQuad(q, close_by);
+    if (rule < 0 && recognised.Empty()) {
+        return -1;
+    }
+    u8 texels[2][8192]; // the colour and the alpha texture: the button's symbol is in the alpha
+    if (!memory->TryReadBacking(s0.Address(), texels[0], sizeof(texels[0])) ||
+        !memory->TryReadBacking(s1.Address(), texels[1], sizeof(texels[1]))) {
+        return rule;
+    }
+    const u64 hash = XXH3_64bits(texels, sizeof(texels));
+    const int button = recognised.Resolve(q, s0.Address(), hash, rule, now_ms);
+    if (button == GOW3_PROMPT_TRIANGLE) {
+        last_x = q.cx, last_y = q.cy, last_ms = now_ms;
+    }
+    return button;
+}
+
+void ClearFloatingPrompts() {
+    for (auto& b : s_prompt_buttons) {
+        b.alpha_view.reset();
+        b.color_view.reset();
+        b.image.Destroy();
+        b.device = -1;
+        b.generation = ~0ull;
+        b.none = false;
+    }
+    ClearFloatingPromptMemo();
+}
+#endif
+
 } // namespace Gow3Prompts
 
 extern "C" void gow3gpu_prompts_set_labels(int set, const char* const* labels, int count) {
@@ -1309,15 +1816,18 @@ extern "C" void gow3gpu_prompts_set_labels(int set, const char* const* labels, i
     if (set < 0 || set >= Sets) {
         return;
     }
+    ClearFloatingPromptMemo();
     Labels list(GOW3_PROMPT_COUNT);
     for (int i = 0; i < std::min(count, int(GOW3_PROMPT_COUNT)); ++i) {
         list[i] = labels[i] ? labels[i] : "";
     }
     auto canvas = Render(list);
+    auto tlou_canvas = RenderTlou(list);
     {
         auto& state = GetState();
         std::scoped_lock lock{state.mutex};
         state.canvas[set] = std::move(canvas);
+        state.tlou_canvas[set] = std::move(tlou_canvas);
         state.labels[set] = list;
         ++state.generation[set];
     }
@@ -1331,6 +1841,7 @@ extern "C" void gow3gpu_prompts_set_device(int next) {
     if (device.exchange(next) == next) {
         return;
     }
+    ClearFloatingPromptMemo();
     static const char* const names[] = {"PlayStation", "keyboard and mouse", "controller"};
     std::printf("Prompts: %s icons\n", names[std::clamp(next, 0, 2)]);
     std::fflush(stdout);
@@ -1348,8 +1859,88 @@ asm(".section .rdata,\"dr\"\n"
     ".incbin \"" GOW3_FONT_PATH "\"\n"
     ".text\n");
 
+// prompts-test classify: the prompt quads measured in the game (1920x1080) and scaled to other viewports.
+static int TestClassify() {
+    using namespace Gow3Prompts;
+    struct Case {
+        const char* name;
+        char anchor; // the side the HUD element keeps its distance to, or the centre
+        float cx, cy, size, r, g, b, a;
+        bool near;
+        int expected;
+    };
+    const Case cases[] = {
+        {"left tab", 'R', 1174, 120, 96, 0.6f, 0.6f, 0.6f, 1, false, GOW3_PROMPT_L1},
+        {"right tab", 'R', 1669, 120, 96, 0.6f, 0.6f, 0.6f, 1, false, GOW3_PROMPT_R1},
+        {"door prompt", 'C', 976, 530, 54, 1, 1, 1, 1, false, GOW3_PROMPT_TRIANGLE},
+        {"hint prompt", 'L', 110, 1010, 48, 1, 1, 1, 1, false, GOW3_PROMPT_L3},
+        {"hint prompt, large", 'L', 192, 877, 97, 1, 1, 1, 1, false, GOW3_PROMPT_L3},
+        {"hint prompt, largest", 'L', 192, 877, 200, 0.4f, 0.4f, 0.4f, 0.5f, false, GOW3_PROMPT_L3},
+        {"door prompt fading in", 'C', 976, 530, 20, 1, 1, 1, 0.2f, false, GOW3_PROMPT_TRIANGLE},
+        {"ammo tick", 'R', 1660, 888, 30, 1, 1, 1, 0.85f, false, -1},
+        {"world prompt right of the canvas", 'R', 2150, 900, 54, 1, 1, 1, 1, false, GOW3_PROMPT_TRIANGLE},
+        {"world prompt left of the canvas", 'L', -150, 900, 54, 1, 1, 1, 1, false, GOW3_PROMPT_TRIANGLE},
+        {"talk prompt", 'C', 908, 425, 41, 1, 1, 1, 1, false, GOW3_PROMPT_TRIANGLE},
+        {"talk badge", 'C', 873, 380, 110, 1, 1, 1, 1, true, -1},
+        {"struggle", 'C', 960, 600, 120, 1, 1, 1, 1, false, GOW3_PROMPT_SQUARE},
+        {"struggle by a prompt", 'C', 960, 600, 120, 1, 1, 1, 1, true, -1},
+        {"wrench widget", 'R', 1732, 900, 60, 1, 1, 1, 1, false, -1},
+        {"weapon icon", 'R', 998, 198, 192, 1, 1, 1, 1, false, -1},
+        {"category icon", 'R', 1326, 120, 96, 0.89f, 0.80f, 0.43f, 1, false, -1},
+        {"selection frame", 'R', 1326, 117, 120, 1, 1, 1, 0.5f, false, -1},
+    };
+    struct Viewport {
+        float w, h;
+    };
+    int failed = 0;
+    for (const Viewport vp : {Viewport{1920, 1080}, Viewport{1280, 720}, Viewport{2560, 1440}}) {
+        const float k = vp.h / 1080.0f;
+        for (const Case& c : cases) {
+            const float cx = c.anchor == 'L'   ? c.cx * k
+                             : c.anchor == 'R' ? vp.w - (1920 - c.cx) * k
+                                               : vp.w / 2 + (c.cx - 960) * k;
+            const PromptQuad q{cx, c.cy * k, c.size * k, c.size * k, vp.w, vp.h, c.r, c.g, c.b, c.a};
+            const int got = ClassifyQuad(q, c.near);
+            if (got != c.expected) {
+                std::printf("%.0fx%.0f %s: %d, expected %d\n", vp.w, vp.h, c.name, got, c.expected);
+                ++failed;
+            }
+        }
+    }
+    // The pulsing hint keeps its button outside the rules' sizes (same texture, then a changed one);
+    // a weapon icon with a prompt's texture does not take its button.
+    PromptMemory recognised;
+    const auto resolve = [&](float cx, float cy, float size, u64 hash, s64 ms) {
+        const PromptQuad q{cx, cy, size, size, 1920, 1080, 1, 1, 1, 1};
+        return recognised.Resolve(q, 0x1000, hash, ClassifyQuad(q, false), ms);
+    };
+    const struct {
+        const char* name;
+        int got, expected;
+    } steps[] = {
+        {"hint", resolve(192, 877, 100, 1, 0), GOW3_PROMPT_L3},
+        {"hint, grown", resolve(192, 877, 225, 1, 16), GOW3_PROMPT_L3},
+        {"hint, grown, other texture", resolve(192, 877, 225, 2, 32), GOW3_PROMPT_L3},
+        {"hint's place, later", resolve(192, 877, 225, 2, 1000), -1},
+        {"door prompt", resolve(976, 530, 54, 3, 1000), GOW3_PROMPT_TRIANGLE},
+        {"weapon icon, door prompt's texture", resolve(998, 198, 192, 3, 1016), -1},
+        {"door prompt fading in elsewhere", resolve(400, 300, 10, 3, 9000), GOW3_PROMPT_TRIANGLE},
+    };
+    for (const auto& step : steps) {
+        if (step.got != step.expected) {
+            std::printf("memory, %s: %d, expected %d\n", step.name, step.got, step.expected);
+            ++failed;
+        }
+    }
+    std::printf("classify: %d failed\n", failed);
+    return failed ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     using namespace Gow3Prompts;
+    if (argc == 2 && std::strcmp(argv[1], "classify") == 0) {
+        return TestClassify();
+    }
     if (argc < 7) {
         return 2;
     }

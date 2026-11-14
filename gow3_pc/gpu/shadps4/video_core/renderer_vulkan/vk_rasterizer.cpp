@@ -43,6 +43,7 @@
 #include "video_core/renderer_vulkan/tlou_auto_readback.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
+#include "gow3_prompts.h"
 
 namespace Vulkan {
 
@@ -179,6 +180,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
 }
 
 Rasterizer::~Rasterizer() {
+    Gow3Prompts::ClearFloatingPrompts();
     liverpool->SetComputePrecompileHook({}); // before the pipeline cache goes
     Shader::g_srt_pre_walk = nullptr;
 }
@@ -4511,6 +4513,9 @@ bool Rasterizer::HelperEligible(const Pipeline* pipeline) const {
 
 bool Rasterizer::TexturesBindableOnHelper(const Shader::Info& stage,
                                           const PreparedStage* prepared) {
+    if (stage.pgm_hash == Gow3Prompts::PromptShaderHash && Gow3Prompts::FloatingPromptsActive()) {
+        return false;
+    }
     const u64 generation = texture_cache.RegistryGeneration();
     for (u32 image_index = 0; image_index < stage.images.size(); ++image_index) {
         const auto& image_desc = stage.images[image_index];
@@ -6602,6 +6607,38 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         set_slot->key = 0;
     }
 
+    if (stage.pgm_hash == Gow3Prompts::PromptShaderHash && Gow3Prompts::FloatingPromptsActive() &&
+        draw_inputs.is_indexed && draw_inputs.pipeline && stage.images.size() >= 2 &&
+        image_infos.size() >= first_image_idx + 2) {
+        const bool sharps = prepared && prepared->image_sharps && prepared->num_images >= 2;
+        const AmdGpu::Image s0 = sharps ? prepared->image_sharps[0] : stage.images[0].GetSharp(stage);
+        const AmdGpu::Image s1 = sharps ? prepared->image_sharps[1] : stage.images[1].GetSharp(stage);
+        const auto& regs = Regs();
+        const bool is_index16 = regs.index_buffer_type.index_type == AmdGpu::IndexType::Index16;
+        const auto& vs = draw_inputs.pipeline->GetStage(Shader::SwStage::Vertex);
+        const PreparedStage* vs_prep = FindPreparedStage(vs);
+        const auto vsharp = vs_prep && vs_prep->buffer_sharps && vs_prep->num_buffers > 0
+                                ? vs_prep->buffer_sharps[0]
+                                : (!vs.buffers.empty() ? vs.buffers[0].GetSharp(vs) : AmdGpu::Buffer::Null());
+        const auto& vp = regs.viewports[0];
+        Gow3Prompts::PromptGeometry geom{};
+        geom.num_indices = regs.num_indices;
+        geom.is_index16 = is_index16;
+        geom.ib_addr = regs.index_base_address.Address<VAddr>() +
+                       draw_inputs.index_offset * (is_index16 ? sizeof(u16) : sizeof(u32));
+        geom.vb_addr = vsharp.base_address;
+        geom.viewport_h = vp.yscale != 0.0f ? std::abs(vp.yscale) * 2.0f : 1080.0f;
+        const int button = Gow3Prompts::IdentifyFloatingPrompt(s0, s1, memory, geom);
+        if (button >= 0 && Gow3Prompts::BindFloatingPrompt(instance, scheduler, runtime,
+                                                           &image_infos[first_image_idx + 0],
+                                                           &image_infos[first_image_idx + 1], button)) {
+            set_ok = false;
+            if (set_slot) {
+                set_slot->key = 0;
+            }
+        }
+    }
+
     u32 image_info_idx = first_image_idx;
     u32 image_binding_idx = 0;
     for (u32 array_size : image_descriptor_array_sizes) {
@@ -6718,6 +6755,9 @@ Rasterizer::BeginSignature Rasterizer::MakeBeginSignature(const GraphicsPipeline
 
 bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedStage* prepared,
                                      u32 first_image_idx, bool& barrier, TextureSet*& slot) {
+    if (stage.pgm_hash == Gow3Prompts::PromptShaderHash && Gow3Prompts::FloatingPromptsActive()) {
+        return false;
+    }
     const u32 count = static_cast<u32>(stage.images.size());
     if (!prepared || count == 0 || count > TextureSet::MaxImages ||
         Gow3Toggle::Disabled(Gow3Toggle::TextureSetMemo) || FrameCapture::Active()) {

@@ -1546,7 +1546,7 @@ void TextureCache::RefreshImage(Image& image) {
                      image.info.pixel_format == vk::Format::eBc1RgbaSrgbBlock;
     const u32 w = image.info.size.width, h = image.info.size.height;
     if (num_layers == 1 && !is_gpu_modified &&
-        ((w == 512 && h == 512 && image.info.num_bits == 32 && num_mips == 1) ||
+        (((w == 512 || w == 256) && h == 512 && image.info.num_bits == 32 && num_mips == 1) ||
          (bc1 && w >= 64 && w <= 512 && h >= 64 && h <= 512))) {
         if (const auto texels = Gow3Prompts::Replacement(
                 image.info.guest_address, image.info.guest_size, image.info.mips_layout[0].size, w, h,
