@@ -18,6 +18,7 @@
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_wait_diagnostics.h"
@@ -1791,8 +1792,12 @@ void TextureCache::GarbageCollectImages() {
     }();
     static auto next_reading = std::chrono::steady_clock::time_point{};
     static bool reading_above_trigger = true;
+    // gow3 14 Nov 2026: an image or buffer was just placed outside the driver's budget
+    // (image.cpp, buffer.cpp): this pass reads the usage and collects as under pressure.
+    const bool urgent = Vulkan::LowVram::TakeUrgent();
+    const bool low_vram = Vulkan::LowVram::Enabled();
     bool read_usage = instance.CanReportMemoryUsage();
-    if (read_usage && cache_readings && !reading_above_trigger &&
+    if (read_usage && cache_readings && !reading_above_trigger && !urgent &&
         total_used_memory < trigger_gc_memory && std::chrono::steady_clock::now() < next_reading) {
         read_usage = false;
     }
@@ -1834,11 +1839,11 @@ void TextureCache::GarbageCollectImages() {
     // and go first at it. Bounded by the pressure level instead (session 36), they were hardly
     // kept: The Last of Us runs right below it (3073 of 3074 MiB), reuse fell from 27-39 to 1-6
     // images per 10 s and image creation in stalled frames doubled (99 -> 205 ms).
-    TrimImageRecycler(total_used_memory >= critical_gc_memory,
+    TrimImageRecycler(urgent || total_used_memory >= critical_gc_memory,
                       total_used_memory < critical_gc_memory
                           ? critical_gc_memory - total_used_memory
                           : 0);
-    if (total_used_memory < trigger_gc_memory) {
+    if (total_used_memory < trigger_gc_memory && !urgent) {
         return;
     }
     std::scoped_lock lock{mutex};
@@ -1848,11 +1853,18 @@ void TextureCache::GarbageCollectImages() {
     size_t num_deletions = 0;
 
     const auto configure = [&](bool allow_aggressive) {
-        pressured = total_used_memory >= pressure_gc_memory;
+        pressured = urgent || total_used_memory >= pressure_gc_memory;
         aggresive = allow_aggressive && total_used_memory >= critical_gc_memory;
         ticks_to_destroy = aggresive ? 160 : pressured ? 80 : 16;
-        ticks_to_destroy = std::min(ticks_to_destroy, gc_tick);
         num_deletions = aggresive ? 40 : pressured ? 20 : 10;
+        if (low_vram) {
+            // gow3 14 Nov 2026, low video memory mode (vk_low_vram.h; the Uncharted port's
+            // b64fc69): the higher the pressure, the more recently used the images that may go
+            // (above, pressure only looked at images idle for longer, and freed nothing new).
+            ticks_to_destroy = urgent ? 2 : aggresive ? 4 : pressured ? 8 : 16;
+            num_deletions = aggresive ? 80 : pressured ? 40 : 10;
+        }
+        ticks_to_destroy = std::min(ticks_to_destroy, gc_tick);
     };
     const auto clean_up = [&](ImageId image_id) {
         if (num_deletions == 0) {

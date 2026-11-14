@@ -7,6 +7,7 @@
 #include "common/thread.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
@@ -282,7 +283,7 @@ public:
     bool Keep(UniqueImage& image) {
         if (!image.image || !image.allocation || image.image_ci.pNext ||
             image.image_ci.pQueueFamilyIndices || image.size_bytes < MinSize ||
-            image.size_bytes > Budget) {
+            image.size_bytes > Budget()) {
             return false;
         }
         std::vector<Item> dropped;
@@ -298,7 +299,7 @@ public:
                              image.size_bytes, Clock::now()});
             held += image.size_bytes;
             ++kept;
-            while (held > Budget || items.size() > MaxItems) {
+            while (held > Budget() || items.size() > MaxItems) {
                 dropped.push_back(PopOldest());
             }
         }
@@ -356,7 +357,10 @@ public:
 private:
     using Clock = std::chrono::steady_clock;
     static constexpr VkDeviceSize MinSize = VkDeviceSize{4} << 20;
-    static constexpr VkDeviceSize Budget = VkDeviceSize{256} << 20;
+    /// gow3 14 Nov 2026: 128 MiB in the low video memory mode (one of the 96 MiB shadow arrays).
+    static VkDeviceSize Budget() {
+        return VkDeviceSize{Vulkan::LowVram::Enabled() ? 128u : 256u} << 20;
+    }
     static constexpr size_t MaxItems = 16;
     static constexpr auto MaxAge = std::chrono::seconds(30);
 
@@ -430,7 +434,10 @@ public:
     static void Note(VmaAllocator allocator, u32 memory_type) {
         static SpareBlockKeeper* const keeper = [allocator]() -> SpareBlockKeeper* {
             const char* env = std::getenv("GOW3_SPARE_IMAGE_BLOCK");
-            return env && env[0] == '0' ? nullptr : new SpareBlockKeeper(allocator); // process-long
+            // gow3 14 Nov 2026: none in the low video memory mode (its 32 MiB VMA blocks are
+            // quick to make, and a 64 MiB spare would be a dedicated allocation outside them).
+            const bool off = env ? env[0] == '0' : Vulkan::LowVram::Enabled();
+            return off ? nullptr : new SpareBlockKeeper(allocator); // process-long
         }();
         if (keeper) {
             keeper->Wake(memory_type);
@@ -598,6 +605,20 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     if (result != VK_SUCCESS) {
         result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image,
                                 &allocation, &alloc_info);
+    }
+    if (result != VK_SUCCESS) {
+        // gow3 14 Nov 2026 (after the Uncharted port's b64fc69): over the budget the assertion
+        // below stopped the game. Evicting from here is not safe (the caller holds the texture
+        // cache): the collector's next pass is urgent, and this image is placed outside the
+        // budget (the driver pages other memory out; a card that really has no room still fails).
+        Vulkan::LowVram::NoteOverBudget();
+        VmaAllocationCreateInfo relaxed = alloc_ci;
+        relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        result = vmaCreateImage(allocator, &image_ci_unsafe, &relaxed, &unsafe_image, &allocation,
+                                &alloc_info);
+        if (result == VK_SUCCESS) {
+            Vulkan::LowVram::CountOverBudget();
+        }
     }
     const double ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)

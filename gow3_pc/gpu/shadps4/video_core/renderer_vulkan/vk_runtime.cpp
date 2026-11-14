@@ -11,6 +11,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
@@ -546,6 +547,30 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
     dst->flags &= ~VideoCore::ImageFlagBits::Dirty;
 }
 
+/// gow3 14 Nov 2026: the bytes CopyImageWithBuffer stages for these images (the same levels and
+/// sizes, at most 128 MiB), so the low video memory mode asks for a buffer of that size.
+static u64 CopyWithBufferBytes(const VideoCore::Image* src, const VideoCore::Image* dst) {
+    const u32 num_mips = std::min(src->info.resources.levels, dst->info.resources.levels);
+    const u32 num_layers = std::min(src->info.resources.layers, dst->info.resources.layers);
+    u64 total = 0;
+    for (u32 mip = 0; mip < num_mips; ++mip) {
+        const vk::BufferImageCopy copy = {
+            .imageSubresource{.aspectMask = src->aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
+                              .mipLevel = mip,
+                              .layerCount = num_layers},
+            .imageExtent = {std::max(std::min(src->info.size.width, dst->info.size.width) >> mip, 1u),
+                            std::max(std::min(src->info.size.height, dst->info.size.height) >> mip, 1u),
+                            std::max(std::min(src->info.size.depth, dst->info.size.depth) >> mip, 1u)},
+        };
+        const u64 size = Common::AlignUp(BufferImageCopySize(copy, src->info.pixel_format), 16);
+        if (total + size > 128_MB) {
+            break;
+        }
+        total += size;
+    }
+    return std::max<u64>(total, 64_KB);
+}
+
 void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
                                   const VideoCore::Buffer* buffer, u64 offset) {
     // gow3 3 Nov 2026: every level both images have, and the layers both have. Without
@@ -710,9 +735,12 @@ void Runtime::CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) {
             CopyImage(src, dst);
         } else {
             // Perform depth from/to color copy using the intermediate copy buffer.
+            // gow3 14 Nov 2026: in the low video memory mode a buffer of the copy's size instead
+            // of 128 MiB (most of these copies are one depth target: a few MiB).
             static constexpr size_t COPY_BUFFER_SIZE = 128_MB;
+            const u64 request = LowVram::Enabled() ? CopyWithBufferBytes(src, dst) : COPY_BUFFER_SIZE;
             const auto copy_ref =
-                staging_pool.Request(COPY_BUFFER_SIZE, VideoCore::MemoryType::DeviceLocal);
+                staging_pool.Request(request, VideoCore::MemoryType::DeviceLocal, 256);
             CopyImageWithBuffer(src, dst, copy_ref.buffer, copy_ref.offset);
         }
     } else if (src->info.num_samples == 1 && dst->info.num_samples > 1 &&

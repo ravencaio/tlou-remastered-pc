@@ -119,6 +119,10 @@ that is not fixed yet (a workaround is under Known issues), and with rough edges
 - A graphics card or integrated GPU with Vulkan 1.3 and a current driver. Intel's integrated
   graphics from the 6th generation (Skylake) on reach Vulkan 1.3 only with Intel's own current
   driver; a laptop maker's older driver can stop at 1.2.
+- Video memory: 4 GB or more is comfortable at 1080p. Cards of 2 or 3 GB get the launcher's
+  **Video memory: 2-3 GB (saving mode)** automatically (`GOW3_LOW_VRAM`): smaller reserves, old
+  textures dropped sooner and, when the card is full, data in system memory instead of a crash.
+  Pair it with 1280x720 or 1600x900 (or an upscaler) and without PS4 Pro shadows.
 - About 6 GB of free RAM for the game.
 
 ## Playing

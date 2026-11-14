@@ -5,6 +5,7 @@
 #include <cstring>
 #include <functional>
 #include "video_core/renderer_vulkan/vk_draw_pipe.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -679,6 +680,18 @@ void VideoOutDriver::Flip(const Request& req) {
                             static_cast<unsigned long long>(Gow3Stats::arena_released_bytes.load() >> 20),
                             static_cast<unsigned long long>(Gow3Stats::image_bytes.load() >> 20),
                             static_cast<unsigned long long>(Gow3Stats::images_live.load()));
+                // gow3 14 Nov 2026 (low video memory mode, vk_low_vram.h): VMA's blocks against
+                // what is allocated in them, and allocations that did not fit the budget.
+                u64 vma_blocks = 0, vma_allocated = 0;
+                instance.GetVmaDeviceLocalUsage(vma_blocks, vma_allocated);
+                std::printf("Video memory: VMA blocks %llu MiB (%llu allocated); low video memory "
+                            "mode %s; over the budget so far: %llu allocations, %llu buffers in "
+                            "system memory\n",
+                            static_cast<unsigned long long>(vma_blocks >> 20),
+                            static_cast<unsigned long long>(vma_allocated >> 20),
+                            Vulkan::LowVram::Enabled() ? "on" : "off",
+                            static_cast<unsigned long long>(Vulkan::LowVram::OverBudgetAllocations()),
+                            static_cast<unsigned long long>(Vulkan::LowVram::HostBuffers()));
             }
             presenter->GetRasterizer().GetPipelineCache().ReportCompilerStats();
             Vulkan::WaitDiagnostics::Report();

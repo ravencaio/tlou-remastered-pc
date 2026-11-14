@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 
 namespace Vulkan {
 
@@ -31,6 +32,7 @@ namespace {
 constexpr u64 RING_IDLE_FRAMES = 3000;
 constexpr u64 VRAM_RING_IDLE_FRAMES = 600; ///< gow3: a few seconds
 constexpr u64 LARGE_IDLE_FRAMES = 3000;
+constexpr u64 LOW_VRAM_IDLE_FRAMES = 240; ///< gow3: VRAM staging in the low video memory mode
 constexpr u64 PREWARM_BLOCKS = 8;
 constexpr u64 LARGE_MIN_GRANULARITY = 64_KB;
 constexpr u64 BLOCK_SIZE = 16_MB;
@@ -69,8 +71,12 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     keep_blocks = (env ? std::strtoull(env, nullptr, 10) : 512) * 1_MB / BLOCK_SIZE;
     // gow3 (SpartanPort 812190a): the VRAM ring (scratch for detiling and copies) keeps far
     // less: blocks kept for a burst of uploads at an area load stayed in VRAM for good.
+    // gow3 14 Nov 2026: one block in the low video memory mode (vk_low_vram.h), and idle VRAM
+    // blocks and large buffers go after 240 frames (TickFrame).
+    low_vram = LowVram::Enabled();
     const char* vram_env = std::getenv("GOW3_STAGING_KEEP_VRAM_MB");
-    keep_vram_blocks = (vram_env ? std::strtoull(vram_env, nullptr, 10) : 32) * 1_MB / BLOCK_SIZE;
+    keep_vram_blocks =
+        (vram_env ? std::strtoull(vram_env, nullptr, 10) : low_vram ? 16 : 32) * 1_MB / BLOCK_SIZE;
     Ring& ring = rings[u32(MemoryType::HostUncached)];
     for (u64 i = 0; i < PREWARM_BLOCKS; ++i) {
         auto& block = ring.blocks.emplace_back(Block{
@@ -84,9 +90,10 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     }
     // gow3 31 Oct 2026: a large device-local staging buffer took 10-330 ms to allocate during
     // play, once 1.9 s (a frozen frame), when the card's memory was busy. One is made here and
-    // kept. GOW3_STAGING_LARGE_MB=0: none.
+    // kept. GOW3_STAGING_LARGE_MB=0: none (the default in the low video memory mode, where 128
+    // MiB is a sixteenth of the card).
     const char* large = std::getenv("GOW3_STAGING_LARGE_MB");
-    if (const u64 large_mb = large ? std::strtoull(large, nullptr, 10) : 128) {
+    if (const u64 large_mb = large ? std::strtoull(large, nullptr, 10) : low_vram ? 0 : 128) {
         const NewAllocationTimer timer{"large buffer", MemoryType::DeviceLocal, large_mb * 1_MB};
         large_caches[u32(MemoryType::DeviceLocal)].emplace_back(LargeBuffer{
             .buffer = std::make_unique<VideoCore::Buffer>(instance, 0, large_mb * 1_MB,
@@ -216,10 +223,13 @@ void StagingBufferPool::TickFrame() {
     for (u32 type = 0; type < rings.size(); ++type) {
         const bool vram = type == u32(MemoryType::DeviceLocal);
         TrimRing(rings[type], vram ? keep_vram_blocks : keep_blocks,
-                 vram ? VRAM_RING_IDLE_FRAMES : RING_IDLE_FRAMES);
+                 vram ? (low_vram ? LOW_VRAM_IDLE_FRAMES : VRAM_RING_IDLE_FRAMES)
+                      : RING_IDLE_FRAMES);
     }
-    for (auto& cache : large_caches) {
-        TrimLarge(cache);
+    for (u32 type = 0; type < large_caches.size(); ++type) {
+        TrimLarge(large_caches[type], low_vram && type == u32(MemoryType::DeviceLocal)
+                                          ? LOW_VRAM_IDLE_FRAMES
+                                          : LARGE_IDLE_FRAMES);
     }
     PublishStats();
     // gow3 statistics: the pool's size over time (a growing pool means growing per-use scans
@@ -265,9 +275,9 @@ void StagingBufferPool::TrimRing(Ring& ring, u64 keep, u64 idle_frames) {
     }
 }
 
-void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache) {
-    std::erase_if(cache, [this](const LargeBuffer& entry) {
-        return !entry.pinned && !entry.held && frame - entry.last_used_frame >= LARGE_IDLE_FRAMES &&
+void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache, u64 idle_frames) {
+    std::erase_if(cache, [this, idle_frames](const LargeBuffer& entry) {
+        return !entry.pinned && !entry.held && frame - entry.last_used_frame >= idle_frames &&
                scheduler.IsFree(entry.tick);
     });
 }

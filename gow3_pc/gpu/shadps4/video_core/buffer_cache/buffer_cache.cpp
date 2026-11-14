@@ -31,6 +31,7 @@
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -385,9 +386,11 @@ std::optional<u32> FindMemoryType(const vk::PhysicalDeviceMemoryProperties& prop
 // chunks, two of them allocated ahead on this thread; arena memory is never freed, so a chunk is
 // used front to back. Larger ranges, or none left in reserve: one allocation, as before.
 // GOW3_RESIDENCY_CHUNKS=0: always one allocation per range.
+// gow3 14 Nov 2026: in the low video memory mode (vk_low_vram.h) chunks of 16 MiB and one ahead:
+// 128 MiB of reserve was a sixteenth of a 2 GB card.
 struct BufferCache::ResidencyPool {
-    static constexpr u64 ChunkSize = u64{64} << 20;
-    static constexpr size_t Spares = 2;
+    const u64 ChunkSize = u64{Vulkan::LowVram::Enabled() ? 16u : 64u} << 20;
+    const size_t Spares = Vulkan::LowVram::Enabled() ? 1 : 2;
 
     ResidencyPool(vk::Device device_, u32 memory_type_, bool map_)
         : device{device_}, memory_type{memory_type_}, map{map_} {
@@ -5731,7 +5734,8 @@ void BufferCache::ReclaimArenaMemory() {
     // data, pending readbacks or lazy pages (the guest copy is complete there), whose last use the
     // GPU has finished. Their memory is bound again before new memory is allocated, so the arenas
     // stay near the limit. GOW3_ARENA_LIMIT_MB (default a quarter of video memory, at least
-    // 768); GOW3_ARENA_RECLAIM=0: off.
+    // 768; 384 in the low video memory mode, where windows go after 20 s instead of 60);
+    // GOW3_ARENA_RECLAIM=0: off.
     static const bool enabled = [] {
         const char* env = std::getenv("GOW3_ARENA_RECLAIM");
         return !(env && env[0] == '0');
@@ -5757,7 +5761,8 @@ void BufferCache::ReclaimArenaMemory() {
         } else {
             const auto& props = instance.GetMemoryProperties();
             const u32 heap = props.memoryTypes[arena_memory_type_index].heapIndex;
-            mib = std::max<u64>(768, (props.memoryHeaps[heap].size >> 20) / 4);
+            mib = std::max<u64>(Vulkan::LowVram::Enabled() ? 384 : 768,
+                                (props.memoryHeaps[heap].size >> 20) / 4);
             // Arenas in system memory (integrated GPUs) share it with the game: at most
             // 2 GiB, an eighth of the heap on smaller systems.
             if (!(props.memoryHeaps[heap].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
@@ -5772,7 +5777,7 @@ void BufferCache::ReclaimArenaMemory() {
     }();
     static const u16 age_epochs = [] {
         const char* env = std::getenv("GOW3_ARENA_RECLAIM_AGE_S");
-        const int seconds = env && env[0] ? std::atoi(env) : 60;
+        const int seconds = env && env[0] ? std::atoi(env) : Vulkan::LowVram::Enabled() ? 20 : 60;
         return static_cast<u16>(std::clamp(seconds, 6, 2 * (int(ReclaimEpochRing) - 4)) / 2);
     }();
     if ((resident_in_use_blocks << block_shift) <= limit) {

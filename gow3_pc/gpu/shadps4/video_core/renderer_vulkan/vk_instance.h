@@ -398,6 +398,10 @@ public:
         return properties.deviceName;
     }
 
+    /// gow3 14 Nov 2026: VMA's device-local blocks and the bytes allocated in them (the 5 s
+    /// memory report: the difference is room VMA holds that nothing uses).
+    void GetVmaDeviceLocalUsage(u64& block_bytes, u64& allocation_bytes) const;
+
     /// Returns if the device is an integrated GPU.
     bool IsIntegrated() const {
         return properties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu;

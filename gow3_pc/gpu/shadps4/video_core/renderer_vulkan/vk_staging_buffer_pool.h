@@ -75,7 +75,7 @@ private:
     StagingBufferRef RequestLarge(u64 size, VideoCore::MemoryType type, bool deferred);
 
     void TrimRing(Ring& ring, u64 keep, u64 idle_frames);
-    void TrimLarge(std::vector<LargeBuffer>& cache);
+    void TrimLarge(std::vector<LargeBuffer>& cache, u64 idle_frames);
 
     void PublishStats() const;
 
@@ -85,6 +85,7 @@ private:
     std::array<Ring, NUM_TYPES> rings;
     u64 keep_blocks = 0; ///< gow3: ring blocks never trimmed
     u64 keep_vram_blocks = 0; ///< gow3: the same for the VRAM ring (DeviceLocal)
+    bool low_vram = false;     ///< gow3: low video memory mode (vk_low_vram.h)
     std::array<std::vector<LargeBuffer>, NUM_TYPES> large_caches;
     u64 frame = 0;
 };

@@ -10,6 +10,7 @@
 #include "common/assert.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -135,6 +136,31 @@ void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
         VkBuffer unsafe_buffer{};
         VkResult result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &alloc_ci, &unsafe_buffer,
                                           &allocation, out_alloc_info);
+        if (result != VK_SUCCESS) {
+            // gow3 14 Nov 2026 (SpartanPort e7ea71c, the Uncharted port's b64fc69): past the
+            // budget this asserted. Outside the budget first (the driver pages), then, for
+            // video memory, system memory the GPU reads over PCIe: slower, but the game goes on.
+            Vulkan::LowVram::NoteOverBudget();
+            VmaAllocationCreateInfo relaxed = alloc_ci;
+            relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+            allocation = VK_NULL_HANDLE;
+            result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &relaxed, &unsafe_buffer,
+                                     &allocation, out_alloc_info);
+            if (result == VK_SUCCESS) {
+                Vulkan::LowVram::CountOverBudget();
+            } else if (mem_type == MemoryType::DeviceLocal) {
+                relaxed.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+                allocation = VK_NULL_HANDLE;
+                result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &relaxed, &unsafe_buffer,
+                                         &allocation, out_alloc_info);
+                if (result == VK_SUCCESS) {
+                    Vulkan::LowVram::CountHostBuffer();
+                    std::printf("GPU: no video memory for a %llu MiB buffer: placed in system "
+                                "memory\n",
+                                static_cast<unsigned long long>(buffer_ci.size >> 20));
+                }
+            }
+        }
         ASSERT_MSG(result == VK_SUCCESS, "Failed allocating buffer with error {}",
                    vk::to_string(vk::Result{result}));
         buffer = vk::Buffer{unsafe_buffer};

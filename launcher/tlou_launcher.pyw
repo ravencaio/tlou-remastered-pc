@@ -39,7 +39,10 @@ PRESETS = {"q_native": "0", "q_quality": "1", "q_balanced": "2", "q_performance"
 RESOLUTIONS = ["1280x720", "1600x900", "1920x1080", "2560x1440", "2880x1620", "3200x1800", "3840x2160",
                "2560x1080", "3440x1440", "3840x1600", "3840x1080", "5120x1440"]
 DEFAULT_SWITCHES = {"motion_blur": False, "job_sleep": True, "profile": False, "background_shaders": True,
-                    "pro_shadows": True, "ambient_half": True, "quarter_depth": True}
+                    "pro_shadows": True, "ambient_half": True, "quarter_depth": True, "low_vram": "auto"}
+# Video memory (GOW3_LOW_VRAM, gpu/shadps4/video_core/renderer_vulkan/vk_low_vram.h): auto turns the
+# low video memory mode on for cards of 3 GB or less; 2-3 GB forces it, 4 GB or more turns it off.
+LOW_VRAM = {"vram_auto": "auto", "vram_low": "on", "vram_normal": "off"}
 DEFAULT_LANGUAGE = "en"
 # What Start-TLOU-Profile.cmd sets, for the "profiler" switch.
 PROFILE_ENV = {"GOW3_PROFILE": "10", "GOW3_THREAD_IDS": "1", "GOW3_COMPUTE_WAIT_STATS": "1",
@@ -1249,6 +1252,20 @@ DEPTH_TEXT = {
 }
 for _code, _value in DEPTH_TEXT.items():
     TEXTS[_code]["quarter_depth"] = _value
+# Video memory (LOW_VRAM): the label and its three choices.
+VRAM_TEXT = {
+    "pt": ("Memória de vídeo", "Automático", "2-3 GB (modo econômico)", "4 GB ou mais"),
+    "en": ("Video memory", "Automatic", "2-3 GB (saving mode)", "4 GB or more"),
+    "es": ("Memoria de vídeo", "Automático", "2-3 GB (modo de ahorro)", "4 GB o más"),
+    "fr": ("Mémoire vidéo", "Automatique", "2-3 Go (mode économe)", "4 Go ou plus"),
+    "de": ("Videospeicher", "Automatisch", "2-3 GB (Sparmodus)", "4 GB oder mehr"),
+    "it": ("Memoria video", "Automatico", "2-3 GB (modalità risparmio)", "4 GB o più"),
+    "pl": ("Pamięć wideo", "Automatycznie", "2-3 GB (tryb oszczędny)", "4 GB lub więcej"),
+    "ru": ("Видеопамять", "Автоматически", "2-3 ГБ (экономный режим)", "4 ГБ или больше"),
+    "ja": ("ビデオメモリ", "自動", "2〜3 GB（節約モード）", "4 GB以上"),
+}
+for _code, (_label, _auto, _low, _normal) in VRAM_TEXT.items():
+    TEXTS[_code].update({"vram": _label, "vram_auto": _auto, "vram_low": _low, "vram_normal": _normal})
 # What each option of the main screen does, shown by its (i) icon (English for a missing text).
 INFO_TEXT = {
     "pt": {
@@ -1262,6 +1279,7 @@ INFO_TEXT = {
         "profile": "Grava um perfil de desempenho para diagnóstico de problemas (cerca de 10% menos FPS). Deixe desligado para jogar.",
         "background_shaders": "Compila shaders novos em segundo plano: menos travadas, mas algum objeto pode aparecer um instante depois. Desligado: o jogo espera cada shader.",
         "pro_shadows": "Sombras do sol e das luzes em resolução maior, como no PS4 Pro: mais nítidas e um pouco mais pesadas.",
+        "vram": "Para placas de vídeo de 2 ou 3 GB. Usa menos memória de vídeo: reservas menores, texturas antigas descartadas mais cedo e, quando a placa enche, dados vão para a memória do sistema em vez de fechar o jogo. Automático liga sozinho em placas de até 3 GB. Escolher 2-3 GB também desmarca as sombras do PS4 Pro. Combine com 1280x720 ou 1600x900 (ou um upscaler).",
     },
     "en": {
         "upscaler": "Draws the scene smaller and scales it to the screen (FSR 3, DLSS on NVIDIA RTX cards, or TAA). Off: native size.",
@@ -1274,6 +1292,7 @@ INFO_TEXT = {
         "profile": "Records a performance profile to diagnose problems (about 10% fewer FPS). Keep it off to play.",
         "background_shaders": "Compiles new shaders in the background: fewer stutters, but an object may appear a moment late. Off: the game waits for each shader.",
         "pro_shadows": "Sun and light shadows at a higher resolution, as on a PS4 Pro: sharper and a little heavier.",
+        "vram": "For 2 or 3 GB graphics cards. Uses less video memory: smaller reserves, old textures dropped sooner and, when the card is full, data goes to system memory instead of closing the game. Automatic turns it on by itself on cards of up to 3 GB. Choosing 2-3 GB also unticks PS4 Pro shadows. Pair it with 1280x720 or 1600x900 (or an upscaler).",
     },
     "es": {
         "upscaler": "Dibuja la escena más pequeña y la amplía a la pantalla (FSR 3, DLSS en tarjetas NVIDIA RTX, o TAA). Desactivado: tamaño nativo.",
@@ -1286,6 +1305,7 @@ INFO_TEXT = {
         "profile": "Graba un perfil de rendimiento para diagnosticar problemas (alrededor de un 10% menos de FPS). Déjalo desactivado para jugar.",
         "background_shaders": "Compila los shaders nuevos en segundo plano: menos tirones, pero un objeto puede aparecer un instante después. Desactivado: el juego espera cada shader.",
         "pro_shadows": "Sombras del sol y de las luces a mayor resolución, como en PS4 Pro: más nítidas y algo más exigentes.",
+        "vram": "Para tarjetas gráficas de 2 o 3 GB. Usa menos memoria de vídeo: reservas más pequeñas, texturas viejas descartadas antes y, cuando la tarjeta se llena, los datos van a la memoria del sistema en lugar de cerrar el juego. Automático lo activa solo en tarjetas de hasta 3 GB. Elegir 2-3 GB también desmarca las sombras de PS4 Pro. Combínalo con 1280x720 o 1600x900 (o un upscaler).",
     },
     "fr": {
         "upscaler": "Dessine la scène plus petite puis l'agrandit à l'écran (FSR 3, DLSS sur les cartes NVIDIA RTX, ou TAA). Désactivé : taille native.",
@@ -1298,6 +1318,7 @@ INFO_TEXT = {
         "profile": "Enregistre un profil de performances pour diagnostiquer un problème (environ 10 % de FPS en moins). Laissez-le désactivé pour jouer.",
         "background_shaders": "Compile les nouveaux shaders en arrière-plan : moins de saccades, mais un objet peut apparaître un instant plus tard. Désactivé : le jeu attend chaque shader.",
         "pro_shadows": "Ombres du soleil et des lumières en plus haute résolution, comme sur PS4 Pro : plus nettes et un peu plus gourmandes.",
+        "vram": "Pour les cartes graphiques de 2 ou 3 Go. Utilise moins de mémoire vidéo : réserves plus petites, anciennes textures libérées plus tôt et, quand la carte est pleine, les données vont en mémoire système au lieu de fermer le jeu. Automatique l'active tout seul sur les cartes jusqu'à 3 Go. Choisir 2-3 Go décoche aussi les ombres PS4 Pro. À combiner avec 1280x720 ou 1600x900 (ou un upscaler).",
     },
     "de": {
         "upscaler": "Zeichnet die Szene kleiner und skaliert sie auf den Bildschirm (FSR 3, DLSS auf NVIDIA-RTX-Karten oder TAA). Aus: native Größe.",
@@ -1310,6 +1331,7 @@ INFO_TEXT = {
         "profile": "Zeichnet ein Leistungsprofil zur Fehlersuche auf (etwa 10 % weniger FPS). Zum Spielen ausgeschaltet lassen.",
         "background_shaders": "Kompiliert neue Shader im Hintergrund: weniger Ruckler, aber ein Objekt kann einen Moment später erscheinen. Aus: Das Spiel wartet auf jeden Shader.",
         "pro_shadows": "Sonnen- und Lichtschatten in höherer Auflösung wie auf der PS4 Pro: schärfer und etwas anspruchsvoller.",
+        "vram": "Für Grafikkarten mit 2 oder 3 GB. Verbraucht weniger Videospeicher: kleinere Reserven, alte Texturen werden früher verworfen, und wenn die Karte voll ist, landen Daten im Systemspeicher, statt das Spiel zu beenden. Automatisch schaltet ihn bei Karten bis 3 GB selbst ein. 2-3 GB entfernt auch das Häkchen bei den PS4-Pro-Schatten. Am besten mit 1280x720 oder 1600x900 (oder einem Upscaler).",
     },
     "it": {
         "upscaler": "Disegna la scena più piccola e la ingrandisce sullo schermo (FSR 3, DLSS sulle schede NVIDIA RTX, o TAA). Disattivato: dimensione nativa.",
@@ -1322,6 +1344,7 @@ INFO_TEXT = {
         "profile": "Registra un profilo delle prestazioni per diagnosticare problemi (circa il 10% di FPS in meno). Lascialo disattivato per giocare.",
         "background_shaders": "Compila i nuovi shader in background: meno scatti, ma un oggetto può comparire un istante dopo. Disattivato: il gioco attende ogni shader.",
         "pro_shadows": "Ombre del sole e delle luci a risoluzione più alta, come su PS4 Pro: più nitide e un po' più pesanti.",
+        "vram": "Per schede video da 2 o 3 GB. Usa meno memoria video: riserve più piccole, texture vecchie scartate prima e, quando la scheda è piena, i dati vanno nella memoria di sistema invece di chiudere il gioco. Automatico la attiva da solo sulle schede fino a 3 GB. Scegliere 2-3 GB toglie anche la spunta alle ombre PS4 Pro. Abbinala a 1280x720 o 1600x900 (o a un upscaler).",
     },
     "pl": {
         "upscaler": "Rysuje scenę w mniejszym rozmiarze i skaluje ją do ekranu (FSR 3, DLSS na kartach NVIDIA RTX lub TAA). Wyłączone: rozmiar natywny.",
@@ -1334,6 +1357,7 @@ INFO_TEXT = {
         "profile": "Zapisuje profil wydajności do diagnozowania problemów (około 10% mniej FPS). Do gry zostaw wyłączone.",
         "background_shaders": "Kompiluje nowe shadery w tle: mniej przycięć, ale obiekt może pojawić się chwilę później. Wyłączone: gra czeka na każdy shader.",
         "pro_shadows": "Cienie od słońca i świateł w wyższej rozdzielczości, jak na PS4 Pro: ostrzejsze i nieco bardziej wymagające.",
+        "vram": "Dla kart graficznych z 2 lub 3 GB. Zużywa mniej pamięci wideo: mniejsze rezerwy, stare tekstury zwalniane wcześniej, a gdy karta jest pełna, dane trafiają do pamięci systemowej zamiast zamykać grę. Automatycznie włącza się sam na kartach do 3 GB. Wybór 2-3 GB odznacza też cienie z PS4 Pro. Łącz z 1280x720 lub 1600x900 (albo upscalerem).",
     },
     "ru": {
         "upscaler": "Рисует сцену в меньшем размере и масштабирует её до экрана (FSR 3, DLSS на картах NVIDIA RTX или TAA). Выкл.: родной размер.",
@@ -1346,6 +1370,7 @@ INFO_TEXT = {
         "profile": "Записывает профиль производительности для поиска проблем (примерно на 10% меньше FPS). Для игры оставьте выключенным.",
         "background_shaders": "Компилирует новые шейдеры в фоне: меньше подтормаживаний, но объект может появиться с небольшой задержкой. Выкл.: игра ждёт каждый шейдер.",
         "pro_shadows": "Тени от солнца и источников света в более высоком разрешении, как на PS4 Pro: чётче и немного тяжелее.",
+        "vram": "Для видеокарт с 2 или 3 ГБ. Расходует меньше видеопамяти: меньшие резервы, старые текстуры выгружаются раньше, а когда память карты заполнена, данные уходят в системную память вместо закрытия игры. «Автоматически» включает режим сам на картах до 3 ГБ. Выбор 2-3 ГБ также снимает флажок теней PS4 Pro. Сочетайте с 1280x720 или 1600x900 (или с апскейлером).",
     },
     "ja": {
         "upscaler": "シーンを小さく描画して画面サイズに拡大します（FSR 3、NVIDIA RTXカードのDLSS、またはTAA）。オフ：ネイティブサイズ。",
@@ -1358,6 +1383,7 @@ INFO_TEXT = {
         "profile": "問題の診断用にパフォーマンスプロファイルを記録します（FPSが約10%低下）。プレイするときはオフにしてください。",
         "background_shaders": "新しいシェーダーをバックグラウンドでコンパイルします：カクつきは減りますが、オブジェクトの表示が少し遅れることがあります。オフ：ゲームが各シェーダーを待ちます。",
         "pro_shadows": "太陽や照明の影をPS4 Proと同じく高い解像度で描画します：よりシャープになり、少し重くなります。",
+        "vram": "2〜3 GBのグラフィックカード向けです。ビデオメモリの使用量を減らします：予約領域を小さくし、古いテクスチャを早めに解放し、カードがいっぱいになったらゲームを終了せずにデータをシステムメモリに置きます。「自動」は3 GB以下のカードで自動的にオンになります。2〜3 GBを選ぶとPS4 Proの影のチェックも外れます。1280x720か1600x900（またはアップスケーラー）と組み合わせてください。",
     },
 }
 # The PS4 system language the game sees (system_language in tlou.ini; tools/probe_tlou.py passes it
@@ -1590,8 +1616,11 @@ def read_switches(path=None):
     path = path or SWITCHES
     values = dict(DEFAULT_SWITCHES)
     try:
-        values.update({k: bool(v) for k, v in json.loads(path.read_text(encoding="utf-8")).items()
-                       if k in DEFAULT_SWITCHES})
+        for k, v in json.loads(path.read_text(encoding="utf-8")).items():
+            if k == "low_vram":
+                values[k] = v if v in LOW_VRAM.values() else "auto"
+            elif k in DEFAULT_SWITCHES:
+                values[k] = bool(v)
     except (OSError, ValueError):
         pass
     return values
@@ -1730,6 +1759,7 @@ def game_env(switches, base=None, overrides=None, folders=None):
     env["TLOU_PRO_SHADOWS"] = "1" if switches["pro_shadows"] else "0"
     env["TLOU_AMBIENT_SHADOWS"] = "half" if switches.get("ambient_half", True) else "quarter"
     env["GOW3_QUARTER_DEPTH"] = "1" if switches.get("quarter_depth", True) else "0"
+    env["GOW3_LOW_VRAM"] = {"on": "1", "off": "0"}.get(switches.get("low_vram", "auto"), "auto")
     if switches["background_shaders"]:
         # Draws are skipped while their pipeline compiles: it pauses less. It flashed white and
         # crashed the game on 22 Oct 2026 and this switch turns it off if that comes back.
@@ -2051,7 +2081,7 @@ class PadView:
 
 
 class Launcher(tk.Tk):
-    WIDTH, HEIGHT = 1180, 660
+    WIDTH, HEIGHT = 1180, 690   # 690: room for Video memory (14 Nov 2026)
 
     def __init__(self, seconds=0):
         # Its own taskbar entry and icon, not those of pythonw.exe.
@@ -2153,12 +2183,17 @@ class Launcher(tk.Tk):
         self.show_fps = self.check(panel, row + 6, self.t("show_fps"), ini.get("show_fps", "1") == "1")
         self.ambient_half = self.check(panel, row + 7, self.t("ambient_half"), switches["ambient_half"])
         self.quarter_depth = self.check(panel, row + 8, self.t("quarter_depth"), switches["quarter_depth"])
+        self.vram_labels = {self.t(key): value for key, value in LOW_VRAM.items()}
+        self.low_vram = self.choice(panel, row + 9, self.t("vram"), list(self.vram_labels),
+                                    key_for(self.vram_labels, switches["low_vram"], self.t("vram_auto")),
+                                    self.change_vram)
+        self.info(panel, row + 9, "vram")
         self.info(panel, row + 3, "upscaler")
         self.info(panel, row + 4, "quality")
         self.info(panel, row + 5, "vsync")
         self.info(panel, row + 7, "ambient_half")
         self.info(panel, row + 8, "quarter_depth")
-        row = self.section(panel, row + 9, self.t("game"))
+        row = self.section(panel, row + 10, self.t("game"))
         self.motion_blur = self.check(panel, row, self.t("motion_blur"), switches["motion_blur"])
         self.job_sleep = self.check(panel, row + 1, self.t("job_sleep"), switches["job_sleep"])
         self.profile = self.check(panel, row + 2, self.t("profile"), switches["profile"])
@@ -2286,7 +2321,14 @@ class Launcher(tk.Tk):
     def switches(self):
         return {"motion_blur": self.motion_blur.get(), "job_sleep": self.job_sleep.get(), "profile": self.profile.get(),
                 "background_shaders": self.background_shaders.get(), "pro_shadows": self.pro_shadows.get(),
-                "ambient_half": self.ambient_half.get(), "quarter_depth": self.quarter_depth.get()}
+                "ambient_half": self.ambient_half.get(), "quarter_depth": self.quarter_depth.get(),
+                "low_vram": self.vram_labels.get(self.low_vram.get(), "auto")}
+
+    def change_vram(self):
+        """Video memory: 2-3 GB also unticks the PS4 Pro's larger shadow maps."""
+        if self.vram_labels.get(self.low_vram.get()) == "on":
+            self.pro_shadows.set(False)
+        self.save()
 
     def save(self):
         write_ini({"display_mode": self.display_labels[self.display.get()], "output_res": self.resolution.get(),

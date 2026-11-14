@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_vram.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
 #include <vk_mem_alloc.h>
@@ -288,6 +289,16 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
     properties = physical_device.getProperties();
     memory_properties = physical_device.getMemoryProperties();
     CollectDeviceParameters();
+    {
+        // gow3: low video memory mode (vk_low_vram.h), decided before the allocator is made.
+        u64 local = 0;
+        for (u32 i = 0; i < memory_properties.memoryHeapCount; ++i) {
+            if (memory_properties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+                local = std::max<u64>(local, memory_properties.memoryHeaps[i].size);
+            }
+        }
+        LowVram::Decide(local, IsIntegrated());
+    }
     ASSERT_MSG(properties.apiVersion >= TargetVulkanApiVersion,
                "Vulkan {}.{} is required, but only {}.{} is supported by device!",
                VK_VERSION_MAJOR(TargetVulkanApiVersion), VK_VERSION_MINOR(TargetVulkanApiVersion),
@@ -1064,16 +1075,41 @@ void Instance::HogVideoMemoryForTests() {
                 static_cast<unsigned long long>(held >> 20));
 }
 
+void Instance::GetVmaDeviceLocalUsage(u64& block_bytes, u64& allocation_bytes) const {
+    block_bytes = allocation_bytes = 0;
+    if (!allocator) {
+        return;
+    }
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    for (u32 i = 0; i < memory_properties.memoryHeapCount; ++i) {
+        if (memory_properties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+            block_bytes += budgets[i].statistics.blockBytes;
+            allocation_bytes += budgets[i].statistics.allocationBytes;
+        }
+    }
+}
+
 void Instance::CreateAllocator() {
     const VmaVulkanFunctions functions = {
         .vkGetInstanceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
         .vkGetDeviceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr,
     };
 
+    // gow3 14 Nov 2026, low video memory mode (vk_low_vram.h): VMA's blocks are 256 MiB on heaps
+    // over 1 GiB, so up to ~250 MiB of a 2 GB card sat in blocks with nothing in them; 32 MiB
+    // there. And VMA follows the driver's budget (VK_EXT_memory_budget: this process's usage,
+    // buffer arenas included, against what the driver gives it) instead of 80% of the heap less
+    // only its own blocks, so WITHIN_BUDGET allocations notice a full card (see image.cpp and
+    // buffer.cpp for what happens then).
+    const bool low_vram = LowVram::Enabled();
     const VmaAllocatorCreateInfo allocator_info = {
-        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT |
+                 (low_vram && supports_memory_budget ? VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT
+                                                     : 0u),
         .physicalDevice = physical_device,
         .device = *device,
+        .preferredLargeHeapBlockSize = low_vram ? VkDeviceSize{32} << 20 : 0,
         .pVulkanFunctions = &functions,
         .instance = *instance,
         .vulkanApiVersion = TargetVulkanApiVersion,
