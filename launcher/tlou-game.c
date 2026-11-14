@@ -91,7 +91,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
     wchar_t *command = line;
     if (python) {
         swprintf(redirect, 32768, L"%ls\\tlou-game-child.log", dir);
-        child_log = CreateFileW(redirect, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+        /* Inheritable, or the child gets no output handles and the log stays empty. */
+        SECURITY_ATTRIBUTES inherit = {.nLength = sizeof(inherit), .bInheritHandle = TRUE};
+        child_log = CreateFileW(redirect, GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS,
                                 FILE_ATTRIBUTE_NORMAL, NULL);
         if (child_log != INVALID_HANDLE_VALUE) {
             startup.dwFlags |= STARTF_USESTDHANDLES;

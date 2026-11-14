@@ -30,21 +30,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
                     MB_OK | MB_ICONERROR);
         return 1;
     }
-    /* Through cmd.exe: a version manager's pythonw on the PATH may be a batch file. */
-    if (!GetEnvironmentVariableW(L"ComSpec", shell, MAX_PATH))
-        wcscpy(shell, L"C:\\Windows\\System32\\cmd.exe");
+    /* The package's pythonw.exe is started directly: a hidden cmd.exe running an interpreter is
+     * what antivirus heuristics look for in malware loaders (issues #88, #112, #148). Without it
+     * (the repository), through cmd.exe: a version manager's pythonw on the PATH may be a batch
+     * file. */
+    const wchar_t *program;
     swprintf(packaged, 32768, L"%ls\\python\\pythonw.exe", dir);
-    if (GetFileAttributesW(packaged) != INVALID_FILE_ATTRIBUTES)
-        swprintf(line, 32768, L"\"%ls\" /c \"\"%ls\" \"%ls\"%ls%ls\"", shell, packaged, script,
+    if (GetFileAttributesW(packaged) != INVALID_FILE_ATTRIBUTES) {
+        program = packaged;
+        swprintf(line, 32768, L"\"%ls\" \"%ls\"%ls%ls", packaged, script,
                  arguments && *arguments ? L" " : L"", arguments ? arguments : L"");
-    else
+    } else {
+        if (!GetEnvironmentVariableW(L"ComSpec", shell, MAX_PATH))
+            wcscpy(shell, L"C:\\Windows\\System32\\cmd.exe");
+        program = shell;
         swprintf(line, 32768, L"\"%ls\" /c pythonw \"%ls\"%ls%ls", shell, script,
                  arguments && *arguments ? L" " : L"", arguments ? arguments : L"");
+    }
 
     STARTUPINFOW startup = {.cb = sizeof(startup)};
     PROCESS_INFORMATION process;
     DWORD code = 1;
-    BOOL started = CreateProcessW(shell, line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, dir, &startup, &process);
+    BOOL started = CreateProcessW(program, line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, dir, &startup, &process);
     if (started) {
         CloseHandle(process.hThread);
         /* Still running: the launcher is open. Gone with an error: it never opened. */

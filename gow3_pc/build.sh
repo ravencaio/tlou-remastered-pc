@@ -38,18 +38,10 @@ MINGW*|MSYS*)
     fi
     cp out/gpu/gow3-probe.exe out/gpu/gow3-gpu-capabilities.exe out/
     echo "Built $PWD/out/gow3-probe.exe"
-    # The launcher's icon is the player's own picture (launcher/assets, not in the repository).
-    launcher_icon=()
-    if [[ -f ../launcher/assets/icon.ico ]]; then
-        windres -I ../launcher ../launcher/tlou-launcher.rc -O coff -o out/tlou-launcher-icon.o
-        launcher_icon=(out/tlou-launcher-icon.o)
-    fi
-    clang -O2 -Wall -Wextra -Werror -static -municode -mwindows ../launcher/tlou-launcher.c \
-        "${launcher_icon[@]}" -o "../launcher/TLOU Launcher.exe"
+    # The launcher's starter (with the player's own picture as its icon, launcher/assets) and the
+    # game without the launcher's window: the launcher's saved settings, read by run_game.py.
+    bash ../launcher/build-starters.sh "../launcher/TLOU Launcher.exe" "../TLOU Game.exe" --icon
     echo "Built $(dirname "$PWD")/launcher/TLOU Launcher.exe"
-    # The game without the launcher's window: the launcher's saved settings, read by run_game.py.
-    clang -O2 -Wall -Wextra -Werror -static -municode -mwindows ../launcher/tlou-game.c \
-        -o "../TLOU Game.exe"
     echo "Built $(dirname "$PWD")/TLOU Game.exe"
     exit 0
     ;;

@@ -42,11 +42,8 @@ rm -rf -- "$stage/gow3_pc/out/pydeps/iced_x86/__pycache__"   # (paths of this ma
 cp gow3_pc/scripts/*.py "$stage/gow3_pc/scripts/"
 cp tools/probe_tlou.py tools/run_game.py tools/apply_update.py "$stage/tools/"
 cp launcher/tlou_launcher.pyw launcher/updater.py "$stage/launcher/"
-# The starter, without the icon: the icon is the game's cover.
-clang -O2 -Wall -Wextra -Werror -static -municode -mwindows launcher/tlou-launcher.c \
-    -o "$stage/TLOU Launcher.exe"
-clang -O2 -Wall -Wextra -Werror -static -municode -mwindows launcher/tlou-game.c \
-    -o "$stage/TLOU Game.exe"
+# The starters, without the icon: the icon is the game's cover.
+bash launcher/build-starters.sh "$stage/TLOU Launcher.exe" "$stage/TLOU Game.exe"
 # The package's version: the launcher's updates (launcher/updater.py) compare it with the releases.
 cp tools/VERSION "$stage/VERSION"
 cp gow3_pc/packaging/windows/README-player.txt "$stage/README.txt"

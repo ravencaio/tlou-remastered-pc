@@ -1,0 +1,50 @@
+// Resources of the starters (TLOU Launcher.exe, TLOU Game.exe), built by build-starters.sh: version
+// information and a manifest. Antivirus heuristics flag small unsigned programs that start a
+// hidden interpreter and carry neither (issues #88, #112, #148).
+// tlou-version.h is written by build-starters.sh from tools/VERSION.
+#include "tlou-version.h"
+
+// The icon is the player's own picture (launcher/assets, not in the repository).
+#ifdef TLOU_STARTER_ICON
+1 ICON "assets/icon.ico"
+#endif
+
+// RT_MANIFEST (24), resource 1: the program's own manifest.
+1 24 "tlou-starter.manifest"
+
+#ifdef TLOU_STARTER_LAUNCHER
+#define TLOU_DESCRIPTION "The Last of Us Remastered PC port - launcher"
+#define TLOU_FILE_NAME "TLOU Launcher.exe"
+#else
+#define TLOU_DESCRIPTION "The Last of Us Remastered PC port - game starter"
+#define TLOU_FILE_NAME "TLOU Game.exe"
+#endif
+
+1 VERSIONINFO
+FILEVERSION TLOU_VERSION
+PRODUCTVERSION TLOU_VERSION
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0
+FILEOS 0x40004      // VOS_NT_WINDOWS32
+FILETYPE 1          // VFT_APP
+FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "tlou-remastered-pc (github.com/ravencaio/tlou-remastered-pc)"
+            VALUE "FileDescription", TLOU_DESCRIPTION
+            VALUE "FileVersion", TLOU_VERSION_STR
+            VALUE "InternalName", TLOU_FILE_NAME
+            VALUE "LegalCopyright", "GPL-2.0-or-later, see LICENSE.txt"
+            VALUE "OriginalFilename", TLOU_FILE_NAME
+            VALUE "ProductName", "The Last of Us Remastered PC port"
+            VALUE "ProductVersion", TLOU_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
