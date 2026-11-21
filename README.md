@@ -424,6 +424,11 @@ in `launcher/assets/icon.ico` (not in the repository).
   (MIT). NVIDIA, RTX and DLSS are trademarks of NVIDIA Corporation.
 - AMD FSR 4: the v07 INT8 model as built by [Q2RTX](https://github.com/FireBurn/Q2RTX) from AMD's
   MIT-licensed FidelityFX SDK source.
+- **Intel XeSS:** the XeSS option follows VHXXIII's XeSS anti-aliasing for
+  [SpartanPort](https://github.com/FelipePrado0/SpartanPort/pull/1276) and loads Intel's unmodified
+  `libxess.dll` (Intel Simplified Software License; `tools/fetch_aa_files.sh xess`) at run time. The
+  headers in `gow3_pc/gpu/third_party/xess` are Intel's (MIT). Intel and XeSS are trademarks of
+  Intel Corporation.
 - Third-party code: FSR (AMD), imgui, magic_enum, miniz, xbyak, LibAtrac9, FFmpeg, SDL3, PkgTool
   (LibOrbisPkg, LGPL-3.0).
 - Licensed under the GNU GPL v2 or later (see `LICENSE`).

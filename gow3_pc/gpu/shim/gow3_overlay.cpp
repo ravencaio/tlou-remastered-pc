@@ -364,6 +364,7 @@ const char* UpscalerLabel(int upscaler) {
     case Gow3Settings::UpscalerFsr411: return "FSR 4.1.1";
     case Gow3Settings::UpscalerTaa: return "TAA";
     case Gow3Settings::UpscalerDlss: return "DLSS";
+    case Gow3Settings::UpscalerXess: return "XeSS";
     default: return "";
     }
 }
@@ -404,8 +405,8 @@ void ImageTab() {
         // resolution sets the size). Applied on the next frame.
         ImGui::SeparatorText("Anti-aliasing");
         if (BeginRows("##aa")) {
-            const char* labels[5];
-            int values[5];
+            const char* labels[6];
+            int values[6];
             int count = 0;
             labels[count] = "Off (the game's own)";
             values[count++] = Gow3Settings::UpscalerOff;
@@ -421,9 +422,13 @@ void ImageTab() {
                 labels[count] = "NVIDIA DLAA";
                 values[count++] = Gow3Settings::UpscalerDlss;
             }
+            if (s.xess_supported) {
+                labels[count] = "Intel XeSS Native AA";
+                values[count++] = Gow3Settings::UpscalerXess;
+            }
             ChoiceRow("Anti-aliasing", s.upscaler, labels, values, count,
-                      "Smooths jagged and flickering edges using earlier frames. TAA is the lightest; FSR "
-                      "and DLAA keep more detail. Costs a little GPU time.");
+                      "Smooths jagged and flickering edges using earlier frames. TAA is the lightest; FSR, "
+                      "DLAA and XeSS keep more detail. Costs a little GPU time.");
             if (!s.dlss_supported) {
                 const char* problem = s.dlss_problem.load();
                 InfoRow("NVIDIA DLAA", problem ? problem : "needs an NVIDIA RTX graphics card");
@@ -432,13 +437,18 @@ void ImageTab() {
                 InfoRow("NVIDIA DLAA", "uses NVIDIA DLSS");
                 Help("NVIDIA, RTX and DLSS are trademarks of NVIDIA Corporation.");
             }
+            // XeSS: on the next start when it was not the anti-aliasing the game started with.
+            if (const char* problem = s.xess_problem.load(); s.xess_supported && problem) {
+                InfoRow("Intel XeSS", problem);
+            }
             const int upscaler = s.upscaler;
             const bool sharpens = upscaler == Gow3Settings::UpscalerFsr3 ||
                                   Gow3Settings::IsFsr4(upscaler) ||
-                                  upscaler == Gow3Settings::UpscalerDlss;
+                                  upscaler == Gow3Settings::UpscalerDlss ||
+                                  upscaler == Gow3Settings::UpscalerXess;
             ImGui::BeginDisabled(!sharpens);
             CheckRow("Anti-aliasing sharpening", s.sharpen,
-                     "Sharpens the anti-aliased image (FSR and DLAA; TAA has none).");
+                     "Sharpens the anti-aliased image (FSR, DLAA and XeSS; TAA has none).");
             ImGui::BeginDisabled(!s.sharpen);
             Row("Anti-aliasing sharpness");
             int sharpness = int(std::lround(s.sharpness.load() * 100.0f));

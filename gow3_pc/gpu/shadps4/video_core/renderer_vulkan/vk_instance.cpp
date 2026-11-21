@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <cstdio>
 #include <mutex>
+#include <optional>
+#include <string_view>
 #include <vector>
 #include <cstdlib>
 #include <boost/container/static_vector.hpp>
@@ -19,6 +22,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_low_vram.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
+#include "video_core/renderer_vulkan/vk_xess.h"
 
 #include <vk_mem_alloc.h>
 
@@ -786,6 +790,26 @@ bool Instance::CreateDevice() {
             }
         }
     }
+    // gow3 20 Nov 2026 (after SpartanPort #1276): XeSS (vk_xess.h) asks for device extensions of
+    // its own. They are enabled only when it is the upscaler the game starts with, so the device
+    // is the same as before without it.
+    const bool xess_selected = Xess::SelectedAtStart() && Xess::LibraryAvailable();
+    bool xess_extensions = false; ///< all of XeSS's extensions are enabled
+    if (xess_selected) {
+        const auto xess_names = Xess::DeviceExtensions(*instance, physical_device);
+        xess_extensions = !xess_names.empty();
+        for (const char* name : xess_names) {
+            const bool already =
+                std::any_of(enabled_extensions.begin(), enabled_extensions.end(),
+                            [&](const char* e) { return std::string_view{e} == name; });
+            const bool added = already || (enabled_extensions.size() < enabled_extensions.capacity() &&
+                                           add_extension(name));
+            if (!added) {
+                std::printf("XeSS: device extension %s unavailable\n", name);
+            }
+            xess_extensions = xess_extensions && added;
+        }
+    }
     vk::StructureChain device_chain = {
         vk::DeviceCreateInfo{
             .queueCreateInfoCount = static_cast<u32>(queue_infos.size()),
@@ -1033,7 +1057,33 @@ bool Instance::CreateDevice() {
         device_chain.unlink<vk::PhysicalDevicePageableDeviceLocalMemoryFeaturesEXT>();
     }
 
-    auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
+    // gow3 20 Nov 2026: XeSS's device features (xessVKGetRequiredDeviceFeatures) are patched
+    // into the chain only with its extensions. The chain as it was is the way back when the
+    // device cannot be created with them: the game starts, FSR 3.1 runs and the menu says why.
+    std::optional<decltype(device_chain)> plain_chain;
+    bool xess_patched = false;
+    if (xess_selected) {
+        plain_chain.emplace(device_chain);
+        void* head = &device_chain.get<vk::PhysicalDeviceFeatures2>();
+        if (xess_extensions && Xess::PatchDeviceFeatures(*instance, physical_device, head)) {
+            device_chain.get<vk::DeviceCreateInfo>().pNext = head;
+            xess_patched = true;
+        }
+        Xess::SetDeviceReady(xess_patched,
+                             xess_extensions ? "the graphics driver does not offer the features "
+                                               "XeSS needs"
+                                             : "the graphics driver does not offer the extensions "
+                                               "XeSS needs");
+    }
+    auto created = physical_device.createDeviceUnique(device_chain.get());
+    if (xess_patched && created.result != vk::Result::eSuccess) {
+        std::printf("XeSS: device creation with its features failed (%s); creating it without\n",
+                    vk::to_string(created.result).c_str());
+        Xess::SetDeviceReady(false, "the device could not be created with the features XeSS needs");
+        created = physical_device.createDeviceUnique(plain_chain->get());
+    }
+    const vk::Result device_result = created.result;
+    auto dev = std::move(created.value);
     if (device_result != vk::Result::eSuccess) {
         LOG_CRITICAL(Render_Vulkan, "Failed to create device: {}", vk::to_string(device_result));
         return false;

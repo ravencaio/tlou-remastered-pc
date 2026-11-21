@@ -33,7 +33,7 @@ GAME = ROOT.parent / "CUSA00552"
 
 FPS = ["30", "40", "45", "50", "55", "60", "75", "90", "100", "120"]
 DISPLAY = {"borderless": "borderless", "fullscreen": "fullscreen", "windowed": "windowed"}   # text key: value
-UPSCALERS = {"off": "off", "FSR 3": "fsr3", "TAA": "taa", "DLSS": "dlss"}
+UPSCALERS = {"off": "off", "FSR 3": "fsr3", "TAA": "taa", "DLSS": "dlss", "XeSS": "xess"}
 PRESETS = {"q_native": "0", "q_quality": "1", "q_balanced": "2", "q_performance": "3", "q_ultra": "4"}
 # The size the game draws at (output_res in tlou.ini; tools/probe_tlou.py patches the game's
 # render size to it at start). The ultrawide sizes (21:9, 32:9) also get the aspect ratio patches.
@@ -1556,7 +1556,7 @@ for _code, (_label, _auto, _low, _normal) in VRAM_TEXT.items():
 # What each option of the main screen does, shown by its (i) icon (English for a missing text).
 INFO_TEXT = {
     "pt": {
-        "upscaler": "Desenha a cena menor e amplia para a tela (FSR 3, DLSS em placas NVIDIA RTX, ou TAA). Desligado: tamanho nativo.",
+        "upscaler": "Desenha a cena menor e amplia para a tela (FSR 3, DLSS em placas NVIDIA RTX, XeSS ou TAA). Desligado: tamanho nativo.",
         "quality": "Quanto o upscaler reduz a cena antes de ampliar: Qualidade reduz pouco, Ultra desempenho reduz mais (mais FPS, menos nitidez).",
         "vsync": "Sincroniza com a taxa do monitor: sem cortes na imagem, mas com um pouco mais de atraso nos comandos.",
         "ambient_half": "Desenha as sombras suaves de contato (personagens, veículos, objetos) em meia resolução em vez de um quarto: o contorno claro onde pés e rodas tocam o chão fica com metade da largura. Custa um pouco de desempenho.",
@@ -1569,7 +1569,7 @@ INFO_TEXT = {
         "vram": "Para placas de vídeo de 2 ou 3 GB. Usa menos memória de vídeo: reservas menores, texturas antigas descartadas mais cedo e, quando a placa enche, dados vão para a memória do sistema em vez de fechar o jogo. Automático liga sozinho em placas de até 3 GB. Escolher 2-3 GB também desmarca as sombras do PS4 Pro. Combine com 1280x720 ou 1600x900 (ou um upscaler). Também carrega os shaders salvos só quando o jogo precisa deles, em vez de todos ao abrir: usa muito menos RAM.",
     },
     "en": {
-        "upscaler": "Draws the scene smaller and scales it to the screen (FSR 3, DLSS on NVIDIA RTX cards, or TAA). Off: native size.",
+        "upscaler": "Draws the scene smaller and scales it to the screen (FSR 3, DLSS on NVIDIA RTX cards, XeSS, or TAA). Off: native size.",
         "quality": "How much the upscaler shrinks the scene first: Quality a little, Ultra performance the most (more FPS, less sharpness).",
         "vsync": "Syncs to the monitor's refresh rate: no tearing, slightly more input delay.",
         "ambient_half": "Draws the soft contact shadows (characters, vehicles, props) at half resolution instead of a quarter: the light outline where feet and wheels touch the ground is half as wide. Costs some performance.",
@@ -1582,7 +1582,7 @@ INFO_TEXT = {
         "vram": "For 2 or 3 GB graphics cards. Uses less video memory: smaller reserves, old textures dropped sooner and, when the card is full, data goes to system memory instead of closing the game. Automatic turns it on by itself on cards of up to 3 GB. Choosing 2-3 GB also unticks PS4 Pro shadows. Pair it with 1280x720 or 1600x900 (or an upscaler). It also loads saved shaders only when the game needs them instead of all of them at start: much less RAM.",
     },
     "es": {
-        "upscaler": "Dibuja la escena más pequeña y la amplía a la pantalla (FSR 3, DLSS en tarjetas NVIDIA RTX, o TAA). Desactivado: tamaño nativo.",
+        "upscaler": "Dibuja la escena más pequeña y la amplía a la pantalla (FSR 3, DLSS en tarjetas NVIDIA RTX, XeSS o TAA). Desactivado: tamaño nativo.",
         "quality": "Cuánto reduce el escalador la escena antes de ampliarla: Calidad un poco, Ultra rendimiento lo máximo (más FPS, menos nitidez).",
         "vsync": "Se sincroniza con la frecuencia del monitor: sin cortes en la imagen, con algo más de retraso en los controles.",
         "ambient_half": "Dibuja las sombras suaves de contacto (personajes, vehículos, objetos) a media resolución en lugar de un cuarto: el contorno claro donde los pies y las ruedas tocan el suelo es la mitad de ancho. Cuesta algo de rendimiento.",
@@ -1595,7 +1595,7 @@ INFO_TEXT = {
         "vram": "Para tarjetas gráficas de 2 o 3 GB. Usa menos memoria de vídeo: reservas más pequeñas, texturas viejas descartadas antes y, cuando la tarjeta se llena, los datos van a la memoria del sistema en lugar de cerrar el juego. Automático lo activa solo en tarjetas de hasta 3 GB. Elegir 2-3 GB también desmarca las sombras de PS4 Pro. Combínalo con 1280x720 o 1600x900 (o un upscaler). También carga los shaders guardados solo cuando el juego los necesita, en lugar de todos al iniciar: mucha menos RAM.",
     },
     "fr": {
-        "upscaler": "Dessine la scène plus petite puis l'agrandit à l'écran (FSR 3, DLSS sur les cartes NVIDIA RTX, ou TAA). Désactivé : taille native.",
+        "upscaler": "Dessine la scène plus petite puis l'agrandit à l'écran (FSR 3, DLSS sur les cartes NVIDIA RTX, XeSS ou TAA). Désactivé : taille native.",
         "quality": "À quel point l'upscaler réduit la scène avant de l'agrandir : Qualité un peu, Ultra performance le plus (plus de FPS, moins de netteté).",
         "vsync": "Se synchronise sur la fréquence de l'écran : pas de déchirure de l'image, un peu plus de latence des commandes.",
         "ambient_half": "Dessine les ombres de contact douces (personnages, véhicules, objets) en demi-résolution au lieu d'un quart : le contour clair là où les pieds et les roues touchent le sol est deux fois moins large. Coûte un peu de performances.",
@@ -1608,7 +1608,7 @@ INFO_TEXT = {
         "vram": "Pour les cartes graphiques de 2 ou 3 Go. Utilise moins de mémoire vidéo : réserves plus petites, anciennes textures libérées plus tôt et, quand la carte est pleine, les données vont en mémoire système au lieu de fermer le jeu. Automatique l'active tout seul sur les cartes jusqu'à 3 Go. Choisir 2-3 Go décoche aussi les ombres PS4 Pro. À combiner avec 1280x720 ou 1600x900 (ou un upscaler). Il charge aussi les shaders enregistrés seulement quand le jeu en a besoin, au lieu de tous au démarrage : beaucoup moins de RAM.",
     },
     "de": {
-        "upscaler": "Zeichnet die Szene kleiner und skaliert sie auf den Bildschirm (FSR 3, DLSS auf NVIDIA-RTX-Karten oder TAA). Aus: native Größe.",
+        "upscaler": "Zeichnet die Szene kleiner und skaliert sie auf den Bildschirm (FSR 3, DLSS auf NVIDIA-RTX-Karten, XeSS oder TAA). Aus: native Größe.",
         "quality": "Wie stark der Upscaler die Szene vorher verkleinert: Qualität wenig, Ultra-Leistung am meisten (mehr FPS, weniger Schärfe).",
         "vsync": "Synchronisiert mit der Bildwiederholrate des Monitors: kein Tearing, etwas mehr Eingabeverzögerung.",
         "ambient_half": "Zeichnet die weichen Kontaktschatten (Figuren, Fahrzeuge, Objekte) in halber statt viertel Auflösung: Der helle Rand, wo Füße und Räder den Boden berühren, ist halb so breit. Kostet etwas Leistung.",
@@ -1621,7 +1621,7 @@ INFO_TEXT = {
         "vram": "Für Grafikkarten mit 2 oder 3 GB. Verbraucht weniger Videospeicher: kleinere Reserven, alte Texturen werden früher verworfen, und wenn die Karte voll ist, landen Daten im Systemspeicher, statt das Spiel zu beenden. Automatisch schaltet ihn bei Karten bis 3 GB selbst ein. 2-3 GB entfernt auch das Häkchen bei den PS4-Pro-Schatten. Am besten mit 1280x720 oder 1600x900 (oder einem Upscaler). Gespeicherte Shader werden außerdem erst geladen, wenn das Spiel sie braucht, statt alle beim Start: viel weniger RAM.",
     },
     "it": {
-        "upscaler": "Disegna la scena più piccola e la ingrandisce sullo schermo (FSR 3, DLSS sulle schede NVIDIA RTX, o TAA). Disattivato: dimensione nativa.",
+        "upscaler": "Disegna la scena più piccola e la ingrandisce sullo schermo (FSR 3, DLSS sulle schede NVIDIA RTX, XeSS o TAA). Disattivato: dimensione nativa.",
         "quality": "Quanto l'upscaler riduce la scena prima di ingrandirla: Qualità poco, Prestazioni ultra al massimo (più FPS, meno nitidezza).",
         "vsync": "Si sincronizza con la frequenza del monitor: niente tearing, un po' più di ritardo nei comandi.",
         "ambient_half": "Disegna le ombre di contatto morbide (personaggi, veicoli, oggetti) a metà risoluzione invece che a un quarto: il contorno chiaro dove piedi e ruote toccano il suolo è largo la metà. Costa un po' di prestazioni.",
@@ -1634,7 +1634,7 @@ INFO_TEXT = {
         "vram": "Per schede video da 2 o 3 GB. Usa meno memoria video: riserve più piccole, texture vecchie scartate prima e, quando la scheda è piena, i dati vanno nella memoria di sistema invece di chiudere il gioco. Automatico la attiva da solo sulle schede fino a 3 GB. Scegliere 2-3 GB toglie anche la spunta alle ombre PS4 Pro. Abbinala a 1280x720 o 1600x900 (o a un upscaler). Carica inoltre gli shader salvati solo quando servono al gioco, invece di tutti all'avvio: molta meno RAM.",
     },
     "pl": {
-        "upscaler": "Rysuje scenę w mniejszym rozmiarze i skaluje ją do ekranu (FSR 3, DLSS na kartach NVIDIA RTX lub TAA). Wyłączone: rozmiar natywny.",
+        "upscaler": "Rysuje scenę w mniejszym rozmiarze i skaluje ją do ekranu (FSR 3, DLSS na kartach NVIDIA RTX, XeSS lub TAA). Wyłączone: rozmiar natywny.",
         "quality": "Jak bardzo upscaler najpierw zmniejsza scenę: Jakość trochę, Ultra wydajność najbardziej (więcej FPS, mniej ostrości).",
         "vsync": "Synchronizuje z odświeżaniem monitora: bez rozrywania obrazu, nieco większe opóźnienie sterowania.",
         "ambient_half": "Rysuje miękkie cienie kontaktowe (postacie, pojazdy, obiekty) w połowie rozdzielczości zamiast w ćwierci: jasna obwódka tam, gdzie stopy i koła dotykają podłoża, jest o połowę węższa. Kosztuje trochę wydajności.",
@@ -1647,7 +1647,7 @@ INFO_TEXT = {
         "vram": "Dla kart graficznych z 2 lub 3 GB. Zużywa mniej pamięci wideo: mniejsze rezerwy, stare tekstury zwalniane wcześniej, a gdy karta jest pełna, dane trafiają do pamięci systemowej zamiast zamykać grę. Automatycznie włącza się sam na kartach do 3 GB. Wybór 2-3 GB odznacza też cienie z PS4 Pro. Łącz z 1280x720 lub 1600x900 (albo upscalerem). Wczytuje też zapisane shadery dopiero, gdy gra ich potrzebuje, zamiast wszystkich przy starcie: dużo mniej RAM.",
     },
     "ru": {
-        "upscaler": "Рисует сцену в меньшем размере и масштабирует её до экрана (FSR 3, DLSS на картах NVIDIA RTX или TAA). Выкл.: родной размер.",
+        "upscaler": "Рисует сцену в меньшем размере и масштабирует её до экрана (FSR 3, DLSS на картах NVIDIA RTX, XeSS или TAA). Выкл.: родной размер.",
         "quality": "Насколько апскейлер сначала уменьшает сцену: Качество — немного, Ультра производительность — сильнее всего (больше FPS, меньше чёткости).",
         "vsync": "Синхронизация с частотой монитора: без разрывов изображения, но с чуть большей задержкой управления.",
         "ambient_half": "Рисует мягкие контактные тени (персонажи, транспорт, предметы) в половинном разрешении вместо четвертного: светлый ореол там, где ноги и колёса касаются земли, становится вдвое уже. Немного снижает производительность.",
@@ -1660,7 +1660,7 @@ INFO_TEXT = {
         "vram": "Для видеокарт с 2 или 3 ГБ. Расходует меньше видеопамяти: меньшие резервы, старые текстуры выгружаются раньше, а когда память карты заполнена, данные уходят в системную память вместо закрытия игры. «Автоматически» включает режим сам на картах до 3 ГБ. Выбор 2-3 ГБ также снимает флажок теней PS4 Pro. Сочетайте с 1280x720 или 1600x900 (или с апскейлером). Также загружает сохранённые шейдеры только когда они нужны игре, а не все при запуске: намного меньше ОЗУ.",
     },
     "ja": {
-        "upscaler": "シーンを小さく描画して画面サイズに拡大します（FSR 3、NVIDIA RTXカードのDLSS、またはTAA）。オフ：ネイティブサイズ。",
+        "upscaler": "シーンを小さく描画して画面サイズに拡大します（FSR 3、NVIDIA RTXカードのDLSS、XeSS、またはTAA）。オフ：ネイティブサイズ。",
         "quality": "アップスケーラーが拡大前にシーンをどれだけ縮小するか：クオリティは少し、ウルトラパフォーマンスは最大（FPSは上がり、鮮明さは下がります）。",
         "vsync": "モニターのリフレッシュレートに同期します：ティアリングはなくなりますが、操作の遅延が少し増えます。",
         "ambient_half": "やわらかい接地影（キャラクター、車両、オブジェクト）を4分の1ではなく半分の解像度で描画します：足や車輪が地面に触れる部分の明るい輪郭の幅が半分になります。少し負荷が増えます。",

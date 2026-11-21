@@ -6,6 +6,7 @@
 #include "video_core/renderer_vulkan/ui_composition.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +21,7 @@
 #include "ffx_vk_portable.h"
 #include "video_core/host_shaders/upscale_merge_comp.h"
 #include "video_core/host_shaders/upscale_reactive_comp.h"
+#include "video_core/host_shaders/stencil_responsive_comp.h"
 #include "video_core/host_shaders/taa_comp.h"
 #include "video_core/host_shaders/taa_sharpen_comp.h"
 #include "video_core/host_shaders/taa_sharpen_ldr_comp.h"
@@ -55,6 +57,12 @@ FfxVkPortableImage Describe(vk::Image image, vk::Format format, u32 width, u32 h
 /// the upscaler's images of the next GOW3_DUMP_FRAMES (8) frames as raw files
 /// <dir>/fNNN_<name>_<w>x<h>_<format>.raw, for checking temporal stability offline.
 /// Returns the frame number to dump, or -1.
+/// gow3 20 Nov 2026: the menu's anti-aliasing sharpening, unless the debug toggle
+/// UpscalerSharpenOff turns it off for every upscaler (A/B of their unsharpened output).
+bool SharpenOn() {
+    return Gow3Settings::Get().sharpen && !Gow3Toggle::Disabled(Gow3Toggle::UpscalerSharpenOff);
+}
+
 int DumpFrame() {
     static const char* trigger = std::getenv("GOW3_DUMP_TRIGGER");
     static int remaining = 0, index = 0, polls = 0;
@@ -80,6 +88,22 @@ struct DumpImage {
     const char* format;
     vk::ImageAspectFlagBits aspect = vk::ImageAspectFlagBits::eColor;
 };
+
+/// gow3 20 Nov 2026: the dump's name for the output-size UI image's 4-byte format ("final": every
+/// upscaler's result right before the HUD is drawn over it, to compare them in one format).
+const char* UiDumpFormat(vk::Format format) {
+    switch (format) {
+    case vk::Format::eB8G8R8A8Unorm:
+    case vk::Format::eB8G8R8A8Srgb:
+        return "bgra8";
+    case vk::Format::eA2B10G10R10UnormPack32:
+        return "a2b10g10r10";
+    case vk::Format::eA2R10G10B10UnormPack32:
+        return "a2r10g10b10";
+    default:
+        return "rgba8";
+    }
+}
 
 /// Copies `images` into host buffers after the commands recorded so far and writes them to
 /// files once the GPU is done.
@@ -174,6 +198,19 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
                         : dlss->Problem();
         Gow3Settings::ConfigureDlssSupport(dlss && dlss->Available(), problem.c_str());
     }
+    // gow3 20 Nov 2026: XeSS is offered when libxess.dll is there, and runs when the device was
+    // created for it (XeSS the upscaler at start, vk_instance.cpp).
+    xess = std::make_unique<Xess>(instance, scheduler);
+    {
+        std::string why;
+        const bool available = Xess::LibraryAvailable(&why);
+        static std::string problem;
+        problem = !available               ? why
+                  : Xess::DeviceReady()    ? std::string{}
+                  : Xess::SelectedAtStart() ? Xess::DeviceProblem()
+                                           : "applies from the next start (FSR 3.1 until then)";
+        Gow3Settings::ConfigureXessSupport(available, Xess::DeviceReady(), problem.c_str());
+    }
     // Available unless GOW3_UPSCALER=none; on/off and the parameters are the menu's settings.
     const char* env = std::getenv("GOW3_UPSCALER");
     enabled = !(env && std::strcmp(env, "none") == 0);
@@ -242,6 +279,7 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
 
 TemporalUpscaler::~TemporalUpscaler() {
     if (resources_ready) scheduler.Finish();
+    xess.reset();
     if (context) {
         scheduler.Finish();
         ffxVkPortableUpscaleContextDestroy(context);
@@ -254,14 +292,15 @@ bool TemporalUpscaler::Active() const {
            (Gow3Settings::Get().upscaler == Gow3Settings::UpscalerFsr3 ||
             Gow3Settings::IsFsr4(Gow3Settings::Get().upscaler) ||
             Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa ||
-            Gow3Settings::Get().upscaler == Gow3Settings::UpscalerDlss) &&
+            Gow3Settings::Get().upscaler == Gow3Settings::UpscalerDlss ||
+            Gow3Settings::Get().upscaler == Gow3Settings::UpscalerXess) &&
            !Gow3Toggle::Disabled(1u << 24);
 }
 
 bool TemporalUpscaler::ReactiveOn() const {
     // FSR 4 takes no reactive mask: the opaque snapshot and the mask pass would be wasted.
     return Gow3Settings::Get().reactive && !Gow3Toggle::Disabled(1u << 27) && !UseFsr4() && !UseDlss() &&
-           Gow3Settings::Get().upscaler != Gow3Settings::UpscalerTaa;
+           !UseXess() && Gow3Settings::Get().upscaler != Gow3Settings::UpscalerTaa;
 }
 
 void TemporalUpscaler::OnSceneColor(VideoCore::ImageId color) {
@@ -359,6 +398,10 @@ bool TemporalUpscaler::OnFrameStart() {
         if (Gow3Settings::IsFsr4(upscaler)) Gow3Settings::Get().fsr4_problem = nullptr;
     }
     if (applied_upscaler != upscaler) fsr4_failed = false; // retry after a menu change
+    if (applied_upscaler != upscaler && upscaler == Gow3Settings::UpscalerXess && xess_failed) {
+        xess = std::make_unique<Xess>(instance, scheduler); // the GPU is idle (Finish above)
+        xess_failed = false;
+    }
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
     // On GPUs without D32S8 blit support, UI depth is cleared instead of copied from scene.
     if (!scaled_session) {
@@ -426,8 +469,8 @@ void TemporalUpscaler::OnDispatch(u64 cs_hash) {
 }
 
 bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
-    // DLSS, like FSR 4, has its own context: no portable FSR 3 context is made.
-    const bool use_fsr4 = UseFsr4() || UseDlss();
+    // DLSS and XeSS, like FSR 4, have their own contexts: no portable FSR 3 context is made.
+    const bool use_fsr4 = UseFsr4() || UseDlss() || UseXess();
     const bool use_taa = Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa;
     if (use_taa && (w != ow || h != oh)) {
         std::printf("TAA: remove GOW3_RENDER_RES to use native-resolution TAA\n");
@@ -580,7 +623,8 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
         return true;
     }
     if (use_fsr4) {
-        std::printf("Upscaler: FSR 4 inputs %ux%u -> %ux%u\n", w, h, ow, oh);
+        std::printf("Upscaler: %s inputs %ux%u -> %ux%u\n",
+                    UseXess() ? "XeSS" : UseDlss() ? "DLSS" : "FSR 4", w, h, ow, oh);
         return true;
     }
     FfxVkPortableMemoryUsage usage{};
@@ -660,6 +704,25 @@ void TemporalUpscaler::CreatePipelines() {
     merge_pipeline = compute(UPSCALE_MERGE_COMP, *merge_pipeline_layout);
     storage_layout(3, reactive_desc_layout, reactive_pipeline_layout, 3 * sizeof(float));
     reactive_pipeline = compute(UPSCALE_REACTIVE_COMP, *reactive_pipeline_layout);
+    {
+        // XeSS's responsive mask: the stencil (sampled, uint) into the R8 mask (storage).
+        const std::array<vk::DescriptorSetLayoutBinding, 2> bindings{{
+            {.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage,
+             .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageImage,
+             .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        }};
+        stencil_desc_layout = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = u32(bindings.size()),
+            .pBindings = bindings.data(),
+        }));
+        const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, 4 * sizeof(u32)};
+        stencil_pipeline_layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1, .pSetLayouts = &*stencil_desc_layout,
+            .pushConstantRangeCount = 1, .pPushConstantRanges = &push}));
+        stencil_pipeline = compute(STENCIL_RESPONSIVE_COMP, *stencil_pipeline_layout);
+    }
     storage_layout(2, taa_sharpen_desc_layout, taa_sharpen_pipeline_layout, sizeof(float));
     taa_sharpen_pipeline = compute(TAA_SHARPEN_COMP, *taa_sharpen_pipeline_layout);
     taa_sharpen_ldr_pipeline = compute(TAA_SHARPEN_LDR_COMP, *taa_sharpen_pipeline_layout);
@@ -759,7 +822,7 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
     cmdbuf.dispatch((out_width + 7) / 8, (out_height + 7) / 8, 1);
     const auto& settings = Gow3Settings::Get();
     const float strength = std::clamp(settings.sharpness.load(), 0.0f, 2.0f);
-    if (settings.sharpen && strength > 0.0f && !(params.pad & 0xffu)) {
+    if (SharpenOn() && strength > 0.0f && !(params.pad & 0xffu)) {
         const vk::MemoryBarrier2 resolved{
             .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
             .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
@@ -785,10 +848,10 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
 }
 
 void TemporalUpscaler::ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, bool ldr, u32 w,
-                                    u32 h) {
+                                    u32 h, bool whole) {
     const auto& settings = Gow3Settings::Get();
-    const float extra = std::clamp(settings.sharpness.load(), 0.0f, 2.0f) - 1.0f;
-    if (!settings.sharpen || extra <= 0.0f) {
+    const float extra = std::clamp(settings.sharpness.load(), 0.0f, 2.0f) - (whole ? 0.0f : 1.0f);
+    if (!SharpenOn() || extra <= 0.0f) {
         return;
     }
     const auto device = instance.GetDevice();
@@ -1155,6 +1218,13 @@ void TemporalUpscaler::Run() {
             {input_color, input_color_view, color.info.pixel_format, vk::ImageAspectFlagBits::eColor, w, h},
             {input_depth, input_depth_view, depth_format, vk::ImageAspectFlagBits::eDepth, w, h}, w, h,
             ow, oh, frame_ms, true);
+    } else if (UseXess()) {
+        const bool mask = !reduced && RecordStencilResponsive(cmdbuf, depth, depth_format, w, h);
+        dispatched = RecordXess(
+            cmdbuf,
+            {input_color, input_color_view, color.info.pixel_format, vk::ImageAspectFlagBits::eColor, w, h},
+            {input_depth, input_depth_view, depth_format, vk::ImageAspectFlagBits::eDepth, w, h}, w, h,
+            ow, oh, true, mask);
     } else {
         FfxVkPortableUpscaleDispatchInfo info{};
         info.structSize = sizeof(info);
@@ -1200,7 +1270,7 @@ void TemporalUpscaler::Run() {
         // RCAS strength 0..1 (menu, GOW3_FSR_SHARPNESS); jitter at 1:1 softens the image slightly.
         // AMD's RCAS ends at 1; ExtraSharpen adds the rest of the menu's 0..2.
         info.sharpness = std::min(Gow3Settings::Get().sharpness.load(), 1.0f);
-        info.enableSharpening = Gow3Settings::Get().sharpen ? VK_TRUE : VK_FALSE;
+        info.enableSharpening = SharpenOn() ? VK_TRUE : VK_FALSE;
         info.reset = reset ? VK_TRUE : VK_FALSE;
         info.frameId = frame_id++;
     
@@ -1228,7 +1298,7 @@ void TemporalUpscaler::Run() {
         reset = false;
         dispatched_last_frame = true;
         if (Gow3Settings::Get().upscaler != Gow3Settings::UpscalerTaa) {
-            ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
+            ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh, UseXess());
         }
         // gow3: GOW3_DUMP_TRIGGER also dumps native anti-aliasing: its input, motion
         // vectors, result and depth, before the result replaces the scene color.
@@ -1711,7 +1781,8 @@ void TemporalUpscaler::RunScaled() {
     last_frame = now;
 
     // gow3: FSR 4 writes its HDR-format output, copied into the output-size UI image.
-    if (UseFsr4() || UseDlss() || Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa) {
+    if (UseFsr4() || UseDlss() || UseXess() ||
+        Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa) {
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                 vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
                 vk::ImageLayout::eGeneral, all, rw);
@@ -1725,6 +1796,16 @@ void TemporalUpscaler::RunScaled() {
                              {depth_image, depth_view, depth_format, vk::ImageAspectFlagBits::eDepth,
                               source_width, source_height},
                              w, h, ow, oh, frame_ms, false);
+        } else if (UseXess()) {
+            // The guest depth is in General only in the scaled session (the proxy otherwise).
+            const bool mask = scaled_session &&
+                              RecordStencilResponsive(cmdbuf, depth, depth_format, w, h);
+            ok4 = RecordXess(cmdbuf,
+                             {color_image, color_view, LdrFormat(color.info.pixel_format),
+                              vk::ImageAspectFlagBits::eColor, source_width, source_height},
+                             {depth_image, depth_view, depth_format, vk::ImageAspectFlagBits::eDepth,
+                              source_width, source_height},
+                             w, h, ow, oh, false, mask);
         } else {
             ok4 = RecordFsr4(cmdbuf, {color_image, color_view, source_width, source_height},
                             {depth_image, depth_view, source_width, source_height}, w, h, ow,
@@ -1732,7 +1813,7 @@ void TemporalUpscaler::RunScaled() {
         }
         if (ok4) {
             if (Gow3Settings::Get().upscaler != Gow3Settings::UpscalerTaa) {
-                ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
+                ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh, UseXess());
             }
             vk::Image source = vk::Image(output_image);
             vk::ImageLayout source_layout = vk::ImageLayout::eGeneral;
@@ -1784,10 +1865,16 @@ void TemporalUpscaler::RunScaled() {
                 DumpImages(instance, scheduler, cmdbuf, dump,
                            {{color_image, source_width, source_height, 4, "input", "rgba"},
                             {vk::Image(motion_image), w, h, 4, "motion", "rg16f"},
-                            {vk::Image(output_image), tw, th, 8, "output", "rgba16f"}});
+                            {vk::Image(output_image), tw, th, 8, "output", "rgba16f"},
+                            {vk::Image(ui_image), ow, oh, 4, "final", UiDumpFormat(ui_format)}});
                 DumpImages(instance, scheduler, cmdbuf, dump,
                            {{depth_image, source_width, source_height, 4, "depth", "f32",
                              vk::ImageAspectFlagBits::eDepth}});
+                if (depth_format == vk::Format::eD32SfloatS8Uint) {
+                    DumpImages(instance, scheduler, cmdbuf, dump,
+                               {{depth_image, source_width, source_height, 1, "stencil", "u8",
+                                 vk::ImageAspectFlagBits::eStencil}});
+                }
                 if (Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa &&
                     std::getenv("GOW3_TAA_DIAGNOSTICS")) {
                     DumpImages(instance, scheduler, cmdbuf, dump,
@@ -1852,7 +1939,7 @@ void TemporalUpscaler::RunScaled() {
     info.cameraVerticalFovRadians = camera_motion.VerticalFov();
     info.viewSpaceToMeters = 1.0f;
     info.sharpness = std::min(settings.sharpness.load(), 1.0f);
-    info.enableSharpening = settings.sharpen ? VK_TRUE : VK_FALSE;
+    info.enableSharpening = SharpenOn() ? VK_TRUE : VK_FALSE;
     info.reset = reset ? VK_TRUE : VK_FALSE;
     info.frameId = frame_id++;
 
@@ -1877,7 +1964,8 @@ void TemporalUpscaler::RunScaled() {
         if (const int dump = DumpFrame(); dump >= 0 && camera_motion.VelocityMode()) {
             DumpImages(instance, scheduler, cmdbuf, dump,
                        {{color_image, source_width, source_height, 4, "input", "rgba"},
-                        {vk::Image(motion_image), w, h, 4, "motion", "rg16f"}});
+                        {vk::Image(motion_image), w, h, 4, "motion", "rg16f"},
+                        {vk::Image(ui_image), ow, oh, 4, "final", UiDumpFormat(ui_format)}});
             DumpImages(instance, scheduler, cmdbuf, dump,
                        {{depth_image, source_width, source_height, 4, "depth", "f32",
                          vk::ImageAspectFlagBits::eDepth}});
@@ -2325,7 +2413,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         .far_plane = 3000.0f,
         .vertical_fov = camera_motion.VerticalFov(),
         .sharpness = std::min(settings.sharpness.load(), 1.0f),
-        .sharpen = settings.sharpen,
+        .sharpen = SharpenOn(),
         .reset = reset,
         .auto_exposure = settings.fsr4_auto_exposure,
     });
@@ -2385,13 +2473,153 @@ bool TemporalUpscaler::RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource
             .jitter_y = sign * jitter[1],
             .reset = reset,
             .frame_ms = frame_ms,
-            .sharpness = settings.sharpen ? std::min(settings.sharpness.load(), 1.0f) : 0.0f,
+            .sharpness = SharpenOn() ? std::min(settings.sharpness.load(), 1.0f) : 0.0f,
         });
     }
     if (!ok) {
         std::printf("Upscaler: DLSS failed; falling back to FSR 3.1\n");
         Gow3Settings::Get().upscaler = Gow3Settings::UpscalerFsr3;
         dlss_failed = true; // EnsureResources creates the FSR 3 context next frame
+        reset = true;
+    }
+    return ok;
+}
+
+namespace {
+/// gow3 21 Nov 2026: which stencil values are characters, for XeSS's responsive mask.
+/// GOW3_XESS_STENCIL=<bits>:<match>[:invert] (numbers in C notation: 0x10:0x10), or "off".
+/// tlou: the game writes 0x50 over Joel and 0 over the world (a stencil dump at 3408x960: 0 on
+/// 95.5% of the pixels, 0x50 on 4.5%, exactly his silhouette; 0x40 on a few edge pixels). Other
+/// characters were not checked: a pixel with either bit is taken as a character.
+constexpr u32 StencilCharacterBits = 0x50;
+struct StencilRule {
+    bool enabled = false;
+    u32 bits = 0, match = 0, invert = 0;
+};
+const StencilRule& XessStencilRule() {
+    static const StencilRule rule = [] {
+        // Default: (stencil & 0x50) != 0, i.e. not (stencil & 0x50) == 0.
+        StencilRule r{.enabled = true, .bits = StencilCharacterBits, .match = 0, .invert = 1};
+        if (const char* env = std::getenv("GOW3_XESS_STENCIL"); env && env[0]) {
+            char* end = nullptr;
+            r.enabled = std::strcmp(env, "off") != 0 && std::strcmp(env, "0") != 0;
+            r.bits = u32(std::strtoul(env, &end, 0));
+            r.match = end && *end == ':' ? u32(std::strtoul(end + 1, &end, 0)) : r.bits;
+            r.invert = end && *end == ':' ? u32(std::strtoul(end + 1, &end, 0)) : 0u;
+        }
+        std::printf("XeSS: responsive mask from the stencil %s (bits 0x%x, match 0x%x%s)\n",
+                    r.enabled ? "on" : "off", r.bits, r.match, r.invert ? ", inverted" : "");
+        return r;
+    }();
+    return rule;
+}
+} // namespace
+
+bool TemporalUpscaler::RecordStencilResponsive(vk::CommandBuffer cmdbuf,
+                                               const VideoCore::Image& depth,
+                                               vk::Format depth_format, u32 w, u32 h) {
+    const StencilRule& rule = XessStencilRule();
+    if (!rule.enabled || Gow3Toggle::Disabled(Gow3Toggle::XessNoResponsiveMask) ||
+        depth_format != vk::Format::eD32SfloatS8Uint || !resources_ready || !stencil_pipeline) {
+        return false;
+    }
+    const auto all = vk::PipelineStageFlagBits2::eAllCommands;
+    const auto mask_barrier = [&](vk::ImageLayout old_layout, vk::PipelineStageFlags2 src,
+                                  vk::AccessFlags2 src_access, vk::PipelineStageFlags2 dst,
+                                  vk::AccessFlags2 dst_access) {
+        const vk::ImageMemoryBarrier2 b{
+            .srcStageMask = src, .srcAccessMask = src_access,
+            .dstStageMask = dst, .dstAccessMask = dst_access,
+            .oldLayout = old_layout, .newLayout = vk::ImageLayout::eGeneral,
+            .image = vk::Image(reactive_image),
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
+    };
+    // The previous frame's XeSS read it; this frame rewrites every pixel.
+    mask_barrier(vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
+                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
+    const vk::DescriptorImageInfo stencil_info{
+        .imageView = CachedView(depth, depth_format, vk::ImageAspectFlagBits::eStencil),
+        .imageLayout = vk::ImageLayout::eGeneral};
+    const vk::DescriptorImageInfo mask_info{.imageView = *reactive_view,
+                                            .imageLayout = vk::ImageLayout::eGeneral};
+    const std::array<vk::WriteDescriptorSet, 2> writes{{
+        {.dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage,
+         .pImageInfo = &stencil_info},
+        {.dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageImage,
+         .pImageInfo = &mask_info},
+    }};
+    const std::array<u32, 4> push{rule.bits, rule.match, rule.invert, std::bit_cast<u32>(1.0f)};
+    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *stencil_pipeline);
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *stencil_pipeline_layout, 0,
+                                writes);
+    cmdbuf.pushConstants(*stencil_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+                         sizeof(push), push.data());
+    cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
+    mask_barrier(vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                 vk::AccessFlagBits2::eShaderWrite, all, vk::AccessFlagBits2::eShaderRead);
+    return true;
+}
+
+bool TemporalUpscaler::UseXess() const {
+    // Chosen in the menu after the start, FSR 3.1 runs until the next start (the device was not
+    // created for XeSS); the setting stays.
+    return Gow3Settings::Get().upscaler == Gow3Settings::UpscalerXess &&
+           Gow3Settings::Get().xess_ready && xess && !xess_failed;
+}
+
+bool TemporalUpscaler::RecordXess(vk::CommandBuffer cmdbuf, const Xess::Image& color,
+                                  const Xess::Image& depth, u32 w, u32 h, u32 ow, u32 oh,
+                                  bool hdr, bool responsive) {
+    // GOW3_XESS_RESPONSIVE_MAX: how far XeSS leaves its history on the stencil mask (0-1).
+    static const float responsive_max = [] {
+        const char* env = std::getenv("GOW3_XESS_RESPONSIVE_MAX");
+        return env && env[0] ? std::clamp(float(std::atof(env)), 0.0f, 1.0f) : 0.9f;
+    }();
+    // The jitter and motion vectors DLSS gets. Toggle 1 << 26 or GOW3_XESS_INVERT_JITTER=1 flips
+    // the jitter, for tests: on an Arc B580 the flipped sign cost XeSS detail in the scaled and
+    // Native AA paths, so the default is the right one.
+    static const bool invert_env = [] {
+        const char* env = std::getenv("GOW3_XESS_INVERT_JITTER");
+        return env && env[0] == '1';
+    }();
+    const float sign = Gow3Toggle::Disabled(1u << 26) != invert_env ? -1.0f : 1.0f;
+    // Debug toggles (gow3_toggles.h) for the Native AA path's HDR colour.
+    const bool ldr = !hdr || Gow3Toggle::Disabled(Gow3Toggle::XessLdrInput);
+    const bool auto_exposure = !Gow3Toggle::Disabled(Gow3Toggle::XessNoAutoExposure);
+    const bool ok = xess->Record({
+        .cmdbuf = cmdbuf,
+        .color = color,
+        .depth = depth,
+        .motion = {vk::Image(motion_image), *motion_view, vk::Format::eR16G16Sfloat,
+                   vk::ImageAspectFlagBits::eColor, w, h},
+        .output = {vk::Image(output_image), *output_view, vk::Format::eR16G16B16A16Sfloat,
+                   vk::ImageAspectFlagBits::eColor, ow, oh},
+        .responsive = responsive ? Xess::Image{vk::Image(reactive_image), *reactive_view,
+                                               vk::Format::eR8Unorm,
+                                               vk::ImageAspectFlagBits::eColor, w, h}
+                                 : Xess::Image{},
+        .responsive_max = responsive_max,
+        .input_width = w,
+        .input_height = h,
+        .jitter = {sign * jitter[0], sign * jitter[1]},
+        .reset = reset,
+        .hdr = !ldr,
+        .auto_exposure = auto_exposure,
+        .colour = !hdr           ? "tonemapped colour"
+                  : ldr          ? "HDR scene colour taken as LDR"
+                  : auto_exposure ? "HDR scene colour"
+                                  : "HDR scene colour, no auto exposure",
+    });
+    if (!ok && xess->Fatal()) {
+        static std::string shown;
+        const char* problem = xess->Problem();
+        shown = problem ? problem : "XeSS failed";
+        Gow3Settings::Get().xess_problem = shown.c_str();
+        std::printf("Upscaler: XeSS failed; falling back to FSR 3.1\n");
+        Gow3Settings::Get().upscaler = Gow3Settings::UpscalerFsr3;
+        xess_failed = true; // EnsureResources creates the FSR 3 context next frame
         reset = true;
     }
     return ok;

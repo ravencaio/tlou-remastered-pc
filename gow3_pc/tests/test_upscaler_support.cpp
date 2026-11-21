@@ -54,6 +54,23 @@ int main() {
             }
         }
     }
+    // XeSS chosen at start runs only with libxess.dll and a device created for it; otherwise
+    // FSR 3.1 runs and the menu says why. Chosen later, the setting stays for the next start.
+    for (bool available : {false, true}) {
+        for (bool ready : {false, true}) {
+            s.upscaler = UpscalerXess;
+            s.xess_problem = nullptr;
+            ConfigureXessSupport(available, ready, available ? "device not ready" : "no library");
+            const bool runs = available && ready;
+            assert(s.xess_supported == available);
+            assert(s.xess_ready == runs);
+            assert(s.upscaler == (runs ? UpscalerXess : UpscalerFsr3));
+            assert(bool(s.xess_problem.load()) == !runs);
+        }
+    }
+    s.upscaler = UpscalerTaa;
+    ConfigureXessSupport(true, false, "applies from the next start");
+    assert(s.upscaler == UpscalerTaa && s.xess_supported && !s.xess_ready && s.xess_problem.load());
     s.startup_preset = Quality;
     s.startup_upscaler = UpscalerFsr3;
     s.upscaler = UpscalerFsr3;

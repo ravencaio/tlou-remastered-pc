@@ -73,6 +73,17 @@ enum : std::uint64_t {
     OneFrameStart = 1ull << 59,
     /// Upscaler jitter for the full-screen passes in GOW3_JITTER_PS (the sun shadow pass).
     FullScreenPassJitter = 1ull << 60,
+    // gow3 20 Nov 2026: XeSS diagnostics (vk_xess.cpp, TemporalUpscaler::RecordXess), A/B in one
+    // run. Native AA only: XeSS gets the HDR scene without its auto exposure (exposure scale 1),
+    // or takes it as display-range (LDR) colour, as in the scaled presets. XeSS initialises again
+    // when either changes. Neither helped on an Arc B580 (both about 6% less detail than the
+    // default); kept for tests on other GPUs.
+    XessNoAutoExposure = 1ull << 56,
+    XessLdrInput = 1ull << 58,
+    /// Every temporal upscaler (TAA, FSR 3/4, DLSS, XeSS) without the menu's sharpening.
+    UpscalerSharpenOff = 1ull << 61,
+    /// XeSS without its responsive pixel mask from the scene stencil (characters).
+    XessNoResponsiveMask = 1ull << 62,
     // Bits 20-29 are used as raw debug toggles by the camera/object motion and the upscaler.
 };
 inline bool Disabled(std::uint64_t bit) {

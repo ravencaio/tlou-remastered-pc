@@ -356,6 +356,20 @@ void ConfigureDlssSupport(bool available, const char* problem) {
     }
 }
 
+void ConfigureXessSupport(bool available, bool ready, const char* problem) {
+    auto& v = Get();
+    v.xess_supported = available;
+    v.xess_ready = available && ready;
+    static std::string kept;
+    kept = problem ? problem : "";
+    v.xess_problem = v.xess_ready || kept.empty() ? nullptr : kept.c_str();
+    if (v.upscaler == UpscalerXess && !v.xess_ready) {
+        std::printf("Upscaler: XeSS unavailable (%s); falling back to FSR 3.1\n",
+                    kept.empty() ? "libxess.dll missing" : kept.c_str());
+        v.upscaler = UpscalerFsr3;
+    }
+}
+
 bool FixedRenderSession() {
     const char* size = std::getenv("GOW3_RENDER_RES");
     return size && size[0];
@@ -523,7 +537,8 @@ const char* PresetName(int preset) {
 }
 
 const char* UpscalerName(int upscaler) {
-    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa", "dlss"};
+    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa", "dlss",
+                                                         "xess"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
 }
 
@@ -602,6 +617,7 @@ int Percent(float value) {
 }
 /// The anti-aliasing choices the overlay menu offers (Image tab), in its order; only Off when
 /// temporal anti-aliasing is not available in this game.
+constexpr int MaxAntiAliasingChoices = 6;
 int AntiAliasingChoices(int* out) {
     const auto& s = Gow3Settings::Get();
     int count = 0;
@@ -611,11 +627,12 @@ int AntiAliasingChoices(int* out) {
     out[count++] = Gow3Settings::UpscalerFsr3;
     if (s.fsr4_supported) out[count++] = Gow3Settings::UpscalerFsr4;
     if (s.dlss_supported) out[count++] = Gow3Settings::UpscalerDlss;
+    if (s.xess_supported) out[count++] = Gow3Settings::UpscalerXess;
     return count;
 }
 int AntiAliasingIndex() {
     const int upscaler = Gow3Settings::Get().upscaler;
-    int choices[5];
+    int choices[MaxAntiAliasingChoices];
     const int count = AntiAliasingChoices(choices);
     for (int i = 0; i < count; ++i) {
         if (choices[i] == upscaler || (Gow3Settings::IsFsr4(upscaler) && Gow3Settings::IsFsr4(choices[i]))) return i;
@@ -649,7 +666,7 @@ extern "C" int gow3gpu_pc_setting_count(int setting) {
     case GOW3_PC_DISPLAY_MODE: return Gow3Graphics::DisplayModeCount;
     case GOW3_PC_FPS_LIMIT: return int(Gow3Graphics::FpsLimits.size());
     case GOW3_PC_ANTI_ALIASING: {
-        int choices[5];
+        int choices[MaxAntiAliasingChoices];
         return AntiAliasingChoices(choices);
     }
     default: return 2;
@@ -664,7 +681,7 @@ extern "C" const char* gow3gpu_pc_setting_choice(int setting, int index) {
         return index >= 0 && index < int(std::size(names)) ? names[index] : nullptr;
     }
     if (setting == GOW3_PC_ANTI_ALIASING) {
-        int choices[5];
+        int choices[MaxAntiAliasingChoices];
         const int count = AntiAliasingChoices(choices);
         if (index < 0 || index >= count) return nullptr;
         switch (choices[index]) {
@@ -672,6 +689,7 @@ extern "C" const char* gow3gpu_pc_setting_choice(int setting, int index) {
         case Gow3Settings::UpscalerFsr3: return "FSR 3.1";
         case Gow3Settings::UpscalerFsr4: return "FSR 4";
         case Gow3Settings::UpscalerDlss: return "DLAA";
+        case Gow3Settings::UpscalerXess: return "XeSS";
         default: return "Off";
         }
     }
@@ -687,7 +705,7 @@ extern "C" void gow3gpu_pc_setting_set(int setting, int value) {
     case GOW3_PC_VSYNC: s.vsync = value != 0; break;
     case GOW3_PC_FPS_LIMIT: s.fps_limit = G::FpsLimits[std::clamp(value, 0, int(G::FpsLimits.size()) - 1)]; break;
     case GOW3_PC_ANTI_ALIASING: {
-        int choices[5];
+        int choices[MaxAntiAliasingChoices];
         const int count = AntiAliasingChoices(choices);
         const int upscaler = choices[std::clamp(value, 0, count - 1)];
         // FSR 4.1.1 stays as it is when FSR 4 is chosen (the overlay shows both as FSR 4).

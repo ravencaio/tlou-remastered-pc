@@ -62,3 +62,14 @@ Shader cache reads (13 Nov 2026): video_core/blob_pack.cpp packs the cache's sma
   disk for GPUs without VK_KHR_pipeline_binary, and the compute pipelines (no binaries) on the
   others (GOW3_VK_PIPELINE_CACHE). SpartanPort 88486eec8:
   the global pipeline key query keeps rbx (NVIDIA 595.x clobbers it).
+Intel XeSS (20 Nov 2026, after SpartanPort #1276 by VHXXIII: vk_xess.cpp, its device extension and
+  feature patching and libxess.dll's pin): renderer_vulkan/vk_xess.cpp as an anti-aliasing and
+  upscaling choice beside DLSS (TemporalUpscaler::RecordXess, native AA and the scaled presets; the
+  quality setting whose input range holds the render size). third_party/xess: xess.h and xess_vk.h
+  from github.com/intel/xess de0fb9c1c510661c571164e1418ceca8101dab69 (MIT); libxess.dll 2.0.2.68
+  from the same commit (tools/fetch_aa_files.sh xess, sha256 checked).
+Upscaler work on an Arc B580 (21 Nov 2026): the scene texture LOD bias also for draws into a render-size
+  target with a depth buffer (vk_rasterizer.cpp SceneMaterialDraw; the 5-target G-buffer test never
+  matched in The Last of Us); XeSS's responsive pixel mask from the scene stencil (0x50 over the
+  characters; host_shaders/stencil_responsive.comp, after SpartanPort's stencil_reactive.comp and
+  its use as XeSS's mask in #1276); XeSS debug toggles (gow3_toggles.h bits 56, 58, 61, 62).

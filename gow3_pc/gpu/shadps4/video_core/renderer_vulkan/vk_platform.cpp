@@ -23,6 +23,7 @@
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
+#include "video_core/renderer_vulkan/vk_xess.h"
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -291,6 +292,10 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
     // gow3: DLSS (optional bridge DLL) needs its own instance extensions.
     if (Dlss* dlss = Dlss::Get()) {
         dlss->AppendInstanceExtensions(extensions);
+    }
+    // gow3 20 Nov 2026: and XeSS, when it is the upscaler the game starts with (vk_xess.h).
+    if (Xess::SelectedAtStart()) {
+        Xess::AppendInstanceExtensions(extensions);
     }
 
     const vk::ApplicationInfo application_info = {

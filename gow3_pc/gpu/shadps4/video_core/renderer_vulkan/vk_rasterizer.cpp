@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <chrono>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -4672,6 +4673,35 @@ void Rasterizer::JoinBindHelper(void* context) {
     }
 }
 
+// gow3 21 Nov 2026: whether a draw samples the scene's materials (the texture LOD bias above).
+// God of War III draws its G-buffer into 5 or more targets. No draw of The Last of Us has that
+// many (no upscaled run logged the bias), so its upscaled presets sampled textures at the render
+// size's mip levels. Also: a draw into a target of the game's render size with a depth buffer,
+// meant to be the scene's geometry. Shadow passes have no colour target; full-screen passes are
+// expected to bind no depth buffer, and render targets they sample to have no mip levels for the
+// bias to change. On an Arc B580 at the Quality preset this biased about 43% of the draws.
+// GOW3_SCENE_LOD_BIAS=mrt keeps the G-buffer test alone.
+bool Rasterizer::SceneMaterialDraw(const GraphicsPipeline& pipeline) {
+    const auto& key = pipeline.GetGraphicsKey();
+    if (std::popcount(key.mrt_mask & 0xff) >= 5) {
+        return true;
+    }
+    static const bool mrt_only = [] {
+        const char* env = std::getenv("GOW3_SCENE_LOD_BIAS");
+        return env && std::strcmp(env, "mrt") == 0;
+    }();
+    if (mrt_only || !db_desc.first) {
+        return false;
+    }
+    for (s32 cb = 0; cb < std::bit_width(key.mrt_mask); ++cb) {
+        if (const VideoCore::ImageId id = cb_descs[cb].first) {
+            const auto& image = texture_cache.GetImage(id);
+            return upscaler->RenderSizeTarget(image.info.size.width, image.info.size.height);
+        }
+    }
+    return false;
+}
+
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
     if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
         IsComputeImageClear(pipeline)) {
@@ -4688,13 +4718,27 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
     // log2(render / output)). Shadows, post-processing and UI keep the guest's bias.
     sampler_lod_bias = 0.0f;
     if (!pipeline->IsCompute() && !Gow3Toggle::Disabled(Gow3Toggle::SceneMipBias) &&
-        std::popcount(static_cast<const GraphicsPipeline*>(pipeline)->GetGraphicsKey().mrt_mask &
-                      0xff) >= 5) {
+        SceneMaterialDraw(*static_cast<const GraphicsPipeline*>(pipeline))) {
         sampler_lod_bias = upscaler->SceneMipBias();
         static float reported = 0.0f;
         if (sampler_lod_bias != reported) {
             reported = sampler_lod_bias;
             std::printf("Upscaler: scene texture LOD bias %.2f\n", sampler_lod_bias);
+        }
+    }
+    // GOW3_LOD_BIAS_STATS=1: how many draws got the bias, every 5 s.
+    static const bool bias_stats = std::getenv("GOW3_LOD_BIAS_STATS") != nullptr;
+    if (bias_stats && !pipeline->IsCompute()) {
+        static u64 biased = 0, draws = 0;
+        static auto window = std::chrono::steady_clock::now();
+        ++draws;
+        biased += sampler_lod_bias != 0.0f;
+        if (const auto now = std::chrono::steady_clock::now(); now - window >= std::chrono::seconds(5)) {
+            std::printf("Upscaler: texture LOD bias %.2f on %llu of %llu draws (5 s)\n",
+                        upscaler->SceneMipBias(), static_cast<unsigned long long>(biased),
+                        static_cast<unsigned long long>(draws));
+            window = now;
+            biased = draws = 0;
         }
     }
 

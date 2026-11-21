@@ -17,7 +17,7 @@
 namespace Gow3Settings {
 
 enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, UpscalerFsr411 = 3,
-                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerCount };
+                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerXess = 6, UpscalerCount };
 /// FSR 4 v07 or FSR 4.1.1: the same inputs, settings and placement in the frame.
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
@@ -105,6 +105,11 @@ struct Values {
     /// DLSS (gow3_dlss.dll, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
+    /// XeSS (libxess.dll, Windows): offered when the library is there; it runs in this session
+    /// only when it was the upscaler at start (the device is created for it), else from the next.
+    /// xess_problem: why it does not run now, or null.
+    std::atomic<bool> xess_supported{false}, xess_ready{false};
+    std::atomic<const char*> xess_problem{nullptr};
     /// Set by the renderer: temporal anti-aliasing can run in this game (the camera from the
     /// motion blur's velocity pass, in a game that has one).
     std::atomic<bool> temporal_aa_available{false};
@@ -165,6 +170,10 @@ void Load();
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
 void ConfigureDlssSupport(bool available, const char* problem);
+/// After device creation: libxess.dll is there (`available`) and the device was created for XeSS
+/// (`ready`). XeSS chosen at start without both falls back to FSR 3.1; chosen in the menu it is
+/// kept and runs from the next start.
+void ConfigureXessSupport(bool available, bool ready, const char* problem);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
 bool FixedRenderSession();
 int RenderPreset();

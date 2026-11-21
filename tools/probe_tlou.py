@@ -280,7 +280,7 @@ def parse_size(text):
 #     scene's jitter (GOW3_JITTER_PS), or its shadows would crawl with every jitter step.
 # TLOU_UPSCALER_HOOKS=0 leaves all of it out (the upscaler options then do nothing).
 UPSCALER_SCALES = (1.0, 1.5, 1.7, 2.0, 3.0)     # Native AA, Quality, Balanced, Performance, Ultra
-UPSCALERS = ("fsr3", "fsr4", "fsr411", "taa", "dlss")
+UPSCALERS = ("fsr3", "fsr4", "fsr411", "taa", "dlss", "xess")
 
 
 def upscaled_render_size(output, preset):

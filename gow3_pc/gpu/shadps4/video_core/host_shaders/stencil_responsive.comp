@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// gow3 21 Nov 2026: XeSS's responsive pixel mask from the scene stencil, after SpartanPort's
+// stencil_reactive.comp. A pixel whose stencil matches ((stencil & bits) == match, or does not
+// with invert) gets `value`: characters move here without motion vectors of their own (camera
+// motion only), so XeSS relies less on its history there instead of trailing them.
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform utexture2D stencil_tex;
+layout(binding = 1, r8) uniform writeonly image2D mask;
+
+layout(push_constant) uniform Params {
+    uint bits;
+    uint match;
+    uint invert;
+    float value;
+};
+
+void main() {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(mask)))) {
+        return;
+    }
+    const uint s = texelFetch(stencil_tex, pixel, 0).r;
+    const bool hit = ((s & bits) == match) != (invert != 0u);
+    imageStore(mask, pixel, vec4(hit ? value : 0.0));
+}

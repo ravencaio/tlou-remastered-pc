@@ -7,7 +7,12 @@
 #     both DLLs in gow3_pc/out beside the runtime. About 63 MB.
 #   - FSR 4 v07 INT8 native model (AMD's MIT-licensed FidelityFX SDK source, built by Q2RTX:
 #     github.com/FireBurn/Q2RTX) into gow3_pc/fsr4_shaders, the 1080 and 2160 tiers. About 6 MB.
-# Usage: tools/fetch_aa_files.sh [dlss] [fsr4] (default both). Files already there are kept.
+#   - Intel XeSS (in-game menu or launcher: XeSS): libxess.dll from github.com/intel/xess, Intel's
+#     unmodified binary (redistributable under the Intel Simplified Software License, kept beside
+#     it as libxess-LICENSE.txt with libxess-third-party-programs.txt), into gow3_pc/out. The pin
+#     and checksum are SpartanPort's (#1276). About 78 MB.
+# Usage: tools/fetch_aa_files.sh [dlss] [fsr4] [xess] (default dlss and fsr4). Files already
+# there are kept.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 want=${*:-dlss fsr4}
@@ -65,6 +70,26 @@ if [[ $want == *dlss* ]]; then
     "$cmake_exe" --build "$root\\gow3_pc\\out\\dlss-bridge" --config Release > /dev/null
     cp gow3_pc/out/dlss-bridge/Release/gow3_dlss.dll "$sdk/lib/Windows_x86_64/rel/nvngx_dlss.dll" gow3_pc/out/
     echo "DLSS: gow3_pc/out/gow3_dlss.dll and nvngx_dlss.dll ($version)"
+fi
+
+if [[ $want == *xess* ]]; then
+    commit=de0fb9c1c510661c571164e1418ceca8101dab69
+    sha256=251659dd84a3e84de67c886a4186e01f3eca49b00641906fe38bb6b807e5d5b7
+    base=https://raw.githubusercontent.com/intel/xess/$commit
+    dest=downloads/xess-$commit
+    fetch "$base/bin/libxess.dll" "$dest/libxess.dll"
+    fetch "$base/LICENSE.txt" "$dest/LICENSE.txt"
+    fetch "$base/third-party-programs.txt" "$dest/third-party-programs.txt"
+    if [[ $(sha256sum "$dest/libxess.dll" | cut -d' ' -f1) != "$sha256" ]]; then
+        rm -f -- "$dest/libxess.dll"
+        echo "XeSS: libxess.dll does not match the pinned release" >&2
+        exit 1
+    fi
+    mkdir -p gow3_pc/out
+    cp "$dest/libxess.dll" gow3_pc/out/libxess.dll
+    cp "$dest/LICENSE.txt" gow3_pc/out/libxess-LICENSE.txt
+    cp "$dest/third-party-programs.txt" gow3_pc/out/libxess-third-party-programs.txt
+    echo "XeSS: gow3_pc/out/libxess.dll and its license"
 fi
 
 if [[ $want == *fsr4* ]]; then

@@ -320,6 +320,8 @@ private:
                       Shader::Backend::Bindings& binding, u32& write_index, bool& barrier,
                       bool on_helper = false);
     bool BindResources(const Pipeline* pipeline);
+    /// gow3: the draw samples the scene's materials (texture LOD bias while upscaling).
+    [[nodiscard]] bool SceneMaterialDraw(const GraphicsPipeline& pipeline);
     void BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
                       Shader::Backend::Bindings& binding, u32& write_index);
     /// gow3: a stage's resolved textures remembered by its prepared T# hashes
