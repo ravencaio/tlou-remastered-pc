@@ -8207,6 +8207,27 @@ void Rasterizer::UpdateViewportScissorState() const {
             viewport.y = (yoffset - yscale) * target_scale[1] + draw_jitter[1];
             viewport.width = xscale * 2.0f * target_scale[0];
             viewport.height = yscale * 2.0f * target_scale[1];
+            // gow3 21 Nov 2026 (Arc B580; GitHub #188 on an RX 580: a line flickering along the
+            // bottom and right edges with every upscaler): a jittered viewport ends a fraction
+            // of a pixel inside the target when the jitter is negative (959.94 for a 960-row
+            // target), and the driver rasterized nothing in the last row (column) then, though
+            // its pixel centres are inside: the depth stayed cleared there and the lighting made
+            // it sky, every other frame (frame dumps: exactly the frames with a negative jitter
+            // on that axis). One pixel more around it (half on each side: the centre, and with
+            // it the jitter, unchanged) keeps both edges past the target's: a constant scale of
+            // (w + 1) / w, at most half a pixel at the edges. GOW3_JITTER_VIEWPORT_PAD=0: off.
+            static const bool pad = [] {
+                const char* env = std::getenv("GOW3_JITTER_VIEWPORT_PAD");
+                return !(env && env[0] == '0');
+            }();
+            if (pad && (draw_jitter[0] != 0.0f || draw_jitter[1] != 0.0f)) {
+                const float sx = viewport.width < 0.0f ? -1.0f : 1.0f;
+                const float sy = viewport.height < 0.0f ? -1.0f : 1.0f;
+                viewport.x -= 0.5f * sx;
+                viewport.width += sx;
+                viewport.y -= 0.5f * sy;
+                viewport.height += sy;
+            }
         }
 
         // gow3 diagnostic ("clear far" in GOW3_DMA_TRIGGER): a shadow map clear quad
