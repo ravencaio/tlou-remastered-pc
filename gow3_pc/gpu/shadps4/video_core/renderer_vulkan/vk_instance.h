@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdlib>
 #include <span>
 #include <unordered_map>
@@ -95,9 +96,22 @@ public:
         return queue_family_index;
     }
 
-    /// gow3: a second queue of the graphics family (null if the family has one).
+    /// gow3: a second queue of the graphics family, or of a transfer family when the graphics
+    /// family has one queue (null if neither).
     vk::Queue GetCopyQueue() const {
         return copy_queue;
+    }
+
+    u32 GetCopyQueueFamilyIndex() const {
+        return copy_queue_family_index;
+    }
+
+    /// The queue families buffers are shared between (concurrent sharing): the graphics family
+    /// and the copy queue's, when they differ; empty otherwise (exclusive).
+    std::span<const u32> BufferQueueFamilies() const {
+        return copy_queue_family_index != queue_family_index
+                   ? std::span<const u32>{buffer_queue_families}
+                   : std::span<const u32>{};
     }
 
     vk::Queue GetGraphicsQueue() const {
@@ -609,6 +623,8 @@ private:
     vk::Queue copy_queue;
     vk::Queue sparse_queue;
     u32 sparse_queue_family_index{0};
+    u32 copy_queue_family_index{0};
+    std::array<u32, 2> buffer_queue_families{};
     std::vector<vk::PhysicalDevice> physical_devices;
     std::vector<std::string> available_extensions;
     std::unordered_map<vk::Format, vk::FormatProperties3> format_properties;

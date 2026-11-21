@@ -1143,7 +1143,8 @@ void TemporalUpscaler::Run() {
     last_frame = now;
 
     bool dispatched = false;
-    if (Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa) {
+    // What EnsureResources made, not the setting read again (see RunScaled).
+    if (resources_taa) {
         RecordTaa(cmdbuf, input_color_view, input_depth_view);
         dispatched = true;
     } else if (UseFsr4()) {
@@ -1155,7 +1156,7 @@ void TemporalUpscaler::Run() {
             {input_color, input_color_view, color.info.pixel_format, vk::ImageAspectFlagBits::eColor, w, h},
             {input_depth, input_depth_view, depth_format, vk::ImageAspectFlagBits::eDepth, w, h}, w, h,
             ow, oh, frame_ms, true);
-    } else {
+    } else if (context) { // (none when made for FSR 4, DLSS or TAA: FSR 3 chosen since)
         FfxVkPortableUpscaleDispatchInfo info{};
         info.structSize = sizeof(info);
         info.commandBuffer = cmdbuf;
@@ -1637,6 +1638,13 @@ void TemporalUpscaler::RunScaled() {
         failed = true;
         return;
     }
+    // gow3 21 Nov 2026: the menu thread can change the upscaler while a frame records. A
+    // replayed switch to TAA recorded TAA into resources made without its history (null images:
+    // a crash in Intel's driver). The frame keeps to what EnsureResources made (or is not
+    // upscaled when that is not what `taa` sized it for); a change waits for the next frame.
+    if (resources_taa != taa) {
+        return;
+    }
     EnsureUiResources(ow, oh, LdrFormat(color.info.pixel_format), depth.info.pixel_format);
     PrepareUiDepth(camera_motion.Depth());
     const auto depth_format = depth.info.pixel_format;
@@ -1711,12 +1719,12 @@ void TemporalUpscaler::RunScaled() {
     last_frame = now;
 
     // gow3: FSR 4 writes its HDR-format output, copied into the output-size UI image.
-    if (UseFsr4() || UseDlss() || Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa) {
+    if (resources_fsr4 || taa) {
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                 vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
                 vk::ImageLayout::eGeneral, all, rw);
         bool ok4 = true;
-        if (Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa) {
+        if (taa) {
             RecordTaa(cmdbuf, color_view, depth_view);
         } else if (UseDlss()) {
             ok4 = RecordDlss(cmdbuf,
@@ -1725,13 +1733,15 @@ void TemporalUpscaler::RunScaled() {
                              {depth_image, depth_view, depth_format, vk::ImageAspectFlagBits::eDepth,
                               source_width, source_height},
                              w, h, ow, oh, frame_ms, false);
-        } else {
+        } else if (UseFsr4()) {
             ok4 = RecordFsr4(cmdbuf, {color_image, color_view, source_width, source_height},
                             {depth_image, depth_view, source_width, source_height}, w, h, ow,
                             oh, frame_ms);
+        } else {
+            ok4 = false; // FSR 3 chosen since: its context is made next frame
         }
         if (ok4) {
-            if (Gow3Settings::Get().upscaler != Gow3Settings::UpscalerTaa) {
+            if (!taa) {
                 ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
             }
             vk::Image source = vk::Image(output_image);
@@ -1788,8 +1798,7 @@ void TemporalUpscaler::RunScaled() {
                 DumpImages(instance, scheduler, cmdbuf, dump,
                            {{depth_image, source_width, source_height, 4, "depth", "f32",
                              vk::ImageAspectFlagBits::eDepth}});
-                if (Gow3Settings::Get().upscaler == Gow3Settings::UpscalerTaa &&
-                    std::getenv("GOW3_TAA_DIAGNOSTICS")) {
+                if (taa && std::getenv("GOW3_TAA_DIAGNOSTICS")) {
                     DumpImages(instance, scheduler, cmdbuf, dump,
                                {{vk::Image(taa_history[taa_next]),tw,th,16,
                                  "previous_history","rgba32f"},

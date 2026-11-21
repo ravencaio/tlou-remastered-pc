@@ -522,12 +522,15 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         LOG_INFO(Render_Vulkan, "Buffer arenas of {} MiB (driver buffer limit {} MiB)",
                  arena_page_size >> 20, instance.GetMaxBufferSize() >> 20);
     }
+    const auto families = instance.BufferQueueFamilies(); // as the arenas (Buffer)
     const vk::BufferCreateInfo probe_ci = {
         .flags =
             vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency,
         .size = arena_page_size,
         .usage = ARENA_USAGE,
-        .sharingMode = vk::SharingMode::eExclusive,
+        .sharingMode = families.empty() ? vk::SharingMode::eExclusive : vk::SharingMode::eConcurrent,
+        .queueFamilyIndexCount = static_cast<u32>(families.size()),
+        .pQueueFamilyIndices = families.data(),
     };
     const vk::DeviceBufferMemoryRequirements req_info = {
         .pCreateInfo = &probe_ci,
@@ -4787,9 +4790,9 @@ bool BufferCache::SideQueueFetch(std::span<const std::pair<VAddr, u64>> pieces, 
         urgent_pool = Vulkan::Check<"urgent copy pool">(device.createCommandPoolUnique({
             .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer |
                      vk::CommandPoolCreateFlagBits::eTransient,
-            .queueFamilyIndex = instance.GetGraphicsQueueFamilyIndex(),
+            .queueFamilyIndex = instance.GetCopyQueueFamilyIndex(),
         }));
-        urgent_cmd = Vulkan::Check<"urgent copy buffer">(device.allocateCommandBuffers({
+        urgent_cmd =Vulkan::Check<"urgent copy buffer">(device.allocateCommandBuffers({
             .commandPool = *urgent_pool,
             .level = vk::CommandBufferLevel::ePrimary,
             .commandBufferCount = 1,

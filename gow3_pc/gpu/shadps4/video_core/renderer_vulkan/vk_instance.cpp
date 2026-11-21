@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <mutex>
+#include <optional>
 #include <vector>
 #include <cstdlib>
 #include <boost/container/static_vector.hpp>
@@ -770,6 +771,48 @@ bool Instance::CreateDevice() {
         std::printf("GPU: sparse binds on queue family %u (the graphics family %u has none)\n",
                     sparse_queue_family_index, queue_family_index);
     }
+    // gow3 21 Nov 2026 (Arc B580): Intel's Windows driver gives the graphics family one queue
+    // (AMD's too), so there was no copy queue: no batched window fetch, and GOW3_FETCH_NO_BLOCK
+    // and GOW3_SHARE_UNFINISHED_WRITES did nothing. Every write fault into GPU data was a
+    // one-page read on the GPU command thread (a level load: ~6,000 in 5 s, frames of 160-500 ms).
+    // A queue of another family takes the copies then, a transfer-only family first (the copy
+    // engine), and buffers are shared between the two families (concurrent sharing).
+    // GOW3_COPY_FAMILY=0: no copy queue, as before.
+    copy_queue_family_index = queue_family_index;
+    static const bool copy_family_wanted = [] {
+        const char* env = std::getenv("GOW3_COPY_FAMILY");
+        return !(env && env[0] == '0');
+    }();
+    if (queue_count < 2 && copy_family_wanted) {
+        std::optional<u32> copy_family;
+        for (u32 i = 0; i < family_properties.size(); ++i) {
+            const auto flags = family_properties[i].queueFlags;
+            if (i == queue_family_index || i == sparse_queue_family_index ||
+                !family_properties[i].queueCount ||
+                !(flags & (vk::QueueFlagBits::eTransfer | vk::QueueFlagBits::eCompute))) {
+                continue;
+            }
+            const bool transfer_only =
+                !(flags & (vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute));
+            if (!copy_family ||
+                (transfer_only && (family_properties[*copy_family].queueFlags &
+                                   vk::QueueFlagBits::eCompute))) {
+                copy_family = i;
+            }
+        }
+        if (copy_family) {
+            copy_queue_family_index = *copy_family;
+            buffer_queue_families = {queue_family_index, *copy_family};
+            queue_infos.push_back(vk::DeviceQueueCreateInfo{
+                .queueFamilyIndex = *copy_family,
+                .queueCount = 1,
+                .pQueuePriorities = queue_priorities.data(),
+            });
+            std::printf("GPU: urgent copies on queue family %u (the graphics family %u has one "
+                        "queue; GOW3_COPY_FAMILY=0: none)\n",
+                        *copy_family, queue_family_index);
+        }
+    }
 
     const auto vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
     vk12_features = feature_chain.get<vk::PhysicalDeviceVulkan12Features>();
@@ -1051,6 +1094,8 @@ bool Instance::CreateDevice() {
     present_queue = device->getQueue(queue_family_index, queue_count > 2 ? 2 : 0);
     if (queue_count > 1) {
         copy_queue = device->getQueue(queue_family_index, 1);
+    } else if (copy_queue_family_index != queue_family_index) {
+        copy_queue = device->getQueue(copy_queue_family_index, 0);
     }
     std::printf("GPU: presents on %s\n",
                 queue_count > 2 ? "their own queue (GOW3_PRESENT_QUEUE=0: the graphics queue)"

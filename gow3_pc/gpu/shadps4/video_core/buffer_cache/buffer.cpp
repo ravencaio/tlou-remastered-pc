@@ -191,10 +191,14 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
     : cpu_addr{cpu_addr_}, size_bytes{size_bytes_}, mem_type{mem_type_},
       buffer{instance.GetDevice(), instance.GetAllocator()} {
 
+    // gow3: concurrent when the copy queue is of another family (Instance::BufferQueueFamilies).
+    const auto families = instance.BufferQueueFamilies();
     vk::BufferCreateInfo buffer_ci = {
         .size = size_bytes,
         .usage = AllFlags,
-        .sharingMode = vk::SharingMode::eExclusive,
+        .sharingMode = families.empty() ? vk::SharingMode::eExclusive : vk::SharingMode::eConcurrent,
+        .queueFamilyIndexCount = static_cast<u32>(families.size()),
+        .pQueueFamilyIndices = families.data(),
     };
     VmaAllocationInfo alloc_info{};
     buffer.Create(buffer_ci, mem_type, &alloc_info);
