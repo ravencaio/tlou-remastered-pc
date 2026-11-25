@@ -49,16 +49,24 @@ def notify(message, title="The Last of Us Remastered"):
 
 def game_running():
     """The launcher refuses a second run; so does this one: two would share the same files."""
-    # Bytes, not text: tasklist writes in the console code page, which need not decode. stdin from
-    # DEVNULL: pythonw (TLOU Game.exe) has no stdin handle to give the child. stdout can still come
-    # back None under pythonw, which counts as "not running" rather than stopping the game.
+    if sys.platform == "win32":
+        # Bytes, not text: tasklist writes in the console code page, which need not decode. stdin from
+        # DEVNULL: pythonw (TLOU Game.exe) has no stdin handle to give the child. stdout can still come
+        # back None under pythonw, which counts as "not running" rather than stopping the game.
+        try:
+            out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gow3-probe.exe", "/NH"],
+                                 stdin=subprocess.DEVNULL, capture_output=True,
+                                 creationflags=0x08000000)
+        except (OSError, ValueError):
+            return False
+        return b"gow3-probe.exe" in (out.stdout or b"").lower()
+    # POSIX: creationflags is Windows-only (it raises ValueError here), and tasklist does not
+    # exist. Ask the same question as the launcher's game_running(): a running gow3-probe. A
+    # missing pgrep (a stripped-down system) leaves the game startable rather than blocking it.
     try:
-        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gow3-probe.exe", "/NH"],
-                             stdin=subprocess.DEVNULL, capture_output=True,
-                             creationflags=0x08000000)
-    except (OSError, ValueError):
+        return subprocess.run(["pgrep", "-f", "gow3-probe"], capture_output=True).returncode == 0
+    except OSError:
         return False
-    return b"gow3-probe.exe" in (out.stdout or b"").lower()
 
 
 def python_exe():
