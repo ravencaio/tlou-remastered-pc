@@ -24,6 +24,7 @@
 #include "gow3_toggles.h"
 #include "gow3_settings.h"
 #include "gow3_graphics.h"
+#include "gow3_loading.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "common/debug.h"
 #include "common/thread.h"
@@ -971,7 +972,17 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     // The menu's limit also applies with the frame rate unlocked (GOW3_VBLANK_HZ=0,
     // 480 Hz vblank); only an explicit GOW3_FPS_LIMIT fixes it.
     const bool fixed_limit = std::getenv("GOW3_FPS_LIMIT") != nullptr;
+    // gow3 26 Nov 2026: while the game's loading screen is up the limit is lifted (the load
+    // goes forward per frame; gow3_loading.h). GOW3_LOADING_UNCAP=0 keeps it.
+    const auto loading_screen = [] {
+        return Gow3Loading::Active(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count());
+    };
     const auto current_limit = [&] {
+        if (loading_screen()) {
+            return Gow3Loading::FrameLimit();
+        }
         const auto& s = Gow3Settings::Get();
         return fixed_limit ? EmulatorSettings.GetFrameLimit()
                            : u32(Gow3Graphics::PresentLimit(s.fps_limit));
@@ -1007,7 +1018,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     // and lower limits keep the fast vblank (frames shown as soon as they are done).
     const bool adaptive_vblank = EmulatorSettings.GetVblankFrequency() == 480;
     const auto paced_period = [&](u32 limit) {
-        if (!adaptive_vblank) {
+        if (!adaptive_vblank || loading_screen()) {
             return base_period;
         }
         static const double refresh = Gow3DisplayRefreshRate();
@@ -1156,6 +1167,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                 }
             } else {
                 Flip(request);
+                Gow3Loading::NoteFrame();
                 FRAME_END;
             }
         }
@@ -1205,6 +1217,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                     next_flip = NextFlipDeadline(next_flip, std::chrono::steady_clock::now(),
                                                  frame_period);
                     Flip(request);
+                    Gow3Loading::NoteFrame();
                     FRAME_END;
                 }
             }
@@ -1232,6 +1245,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                 next_flip = NextFlipDeadline(next_flip, std::chrono::steady_clock::now(),
                                              frame_period);
                 Flip(request);
+                Gow3Loading::NoteFrame();
                 FRAME_END;
             }
         }

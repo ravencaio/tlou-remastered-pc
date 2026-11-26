@@ -46,6 +46,7 @@
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "gow3_prompts.h"
+#include "gow3_loading.h"
 
 namespace Vulkan {
 
@@ -4198,6 +4199,7 @@ void Rasterizer::OcclusionQueryEvent(VAddr address, u32 pairs) {
     static std::atomic<u32> queries{0}, visible{0};
     static std::atomic<s64> last_report{0};
     ++queries;
+    Gow3Loading::NoteOcclusionQuery(); // a game frame: a loading screen draws none
     if (const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
                             std::chrono::steady_clock::now().time_since_epoch())
                             .count();

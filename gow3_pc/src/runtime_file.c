@@ -526,9 +526,21 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }
+/* gow3 26 Nov 2026: the game's TTY line "----- Switching world: from ..." starts a loading screen,
+ * during which the present thread lifts the frame limit (gpu/shim/gow3_loading.h). */
+void gow3gpu_loading_screen_begin(void);
+static void watch_tty(const void *buffer,uint64_t size) {
+    static const char marker[]="Switching world: from ";
+    const size_t n=sizeof(marker)-1;
+    if (!buffer || size<n || size>4096) return;
+    const char *text=buffer;
+    for (uint64_t i=0;i+n<=size;++i)
+        if (text[i]=='S' && !memcmp(text+i,marker,n)) { gow3gpu_loading_screen_begin(); return; }
+}
 static int64_t do_write(int fd,const void *buffer,uint64_t size) {
     int h=host_fd(fd);
     if (h<0) return -EBADF;
+    if (fd==1 || fd==2) watch_tty(buffer,size);
     ssize_t n=host_write(h,buffer,size);
     if (n<0) return -errno;
     __atomic_add_fetch(&writes,1,__ATOMIC_RELAXED);

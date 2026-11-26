@@ -181,6 +181,9 @@ STARTUP = [
         ("Aquecer só os 1.000 shaders mais recentes (menos RAM)", "GOW3_WARMUP_LIMIT", "1000", "0", True),
         ("Duas threads no aquecimento de shaders (NVIDIA)", "GOW3_WARMUP_THREADS", "2", "0", True),
         ("Workers de jobs ociosos esperam 1 ms (não 10)", "TLOU_JOB_SLEEP_MS", "1", "10", True),
+        # 26 Nov 2026: the game's loads go forward per loading-screen frame (gpu/shim/gow3_loading.h);
+        # off: the loading screen keeps the frame limit (60 FPS: a load of 91 s instead of ~27).
+        ("Telas de loading sem limite de FPS (carrega mais rápido)", "GOW3_LOADING_UNCAP", "1", "0", True),
         ("Enviar o quadro à GPU em partes (mais lento na GTX 1050 Ti)", "GOW3_EARLY_SUBMIT", "1", "0", False),
     ]),
 ]
@@ -962,6 +965,15 @@ DEBUG_TEXT = {
         'Bezczynne wątki zadań czekają 1 ms (nie 10)',
         'Простаивающие обработчики задач ждут 1 мс (не 10)',
         '待機中のジョブワーカーは1 ms待機 (10 msではなく)'),
+    'Telas de loading sem limite de FPS (carrega mais rápido)': (
+        'Loading screens without the FPS limit (faster loads)',
+        'Pantallas de carga sin límite de FPS (carga más rápida)',
+        'Écrans de chargement sans limite de FPS (chargement plus rapide)',
+        'Ladebildschirme ohne FPS-Limit (schnelleres Laden)',
+        'Schermate di caricamento senza limite di FPS (caricamento più rapido)',
+        'Ekrany ładowania bez limitu FPS (szybsze wczytywanie)',
+        'Экраны загрузки без ограничения FPS (быстрее загрузка)',
+        'ロード画面で FPS 制限を解除 (ロードが速くなる)'),
     'Enviar o quadro à GPU em partes (mais lento na GTX 1050 Ti)': (
         'Send the frame to the GPU in parts (slower on a GTX 1050 Ti)',
         'Enviar el fotograma a la GPU por partes (más lento en una GTX 1050 Ti)',
