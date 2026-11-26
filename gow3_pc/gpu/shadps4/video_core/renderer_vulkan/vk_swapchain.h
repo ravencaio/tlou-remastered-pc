@@ -106,6 +106,9 @@ private:
     /// Sets the surface properties according to device capabilities
     void SetSurfaceProperties();
 
+    /// gow3: replaces a lost surface with a new one on the same window
+    void RecreateSurface();
+
     /// Destroys current swapchain resources
     void Destroy();
 

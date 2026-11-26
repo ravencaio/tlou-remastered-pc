@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <limits>
+#include <thread>
+#include <tuple>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
@@ -160,7 +162,9 @@ bool Swapchain::Present() {
         Gow3Stats::WaitTimer timer{Gow3Stats::present_ns};
         result = instance.GetPresentQueue().presentKHR(present_info);
     }
-    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR) {
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR ||
+        result == vk::Result::eErrorSurfaceLostKHR) {
+        // gow3: a lost surface is replaced in Create (SetSurfaceProperties).
         needs_recreation = true;
     } else {
         ASSERT_MSG(result == vk::Result::eSuccess, "Swapchain presentation failed: {}",
@@ -244,9 +248,35 @@ void Swapchain::UpdateVsync() {
     Recreate(width, height);
 }
 
+void Swapchain::RecreateSurface() {
+    // gow3: a lost surface (Wine/Proton on Linux drops the window's host surface when the
+    // window is minimized, goes fullscreen or the compositor restarts) never comes back; only
+    // a new surface on the same window does. The swapchain on the old one is already gone
+    // (Create destroys it first).
+    instance.GetInstance().destroySurfaceKHR(surface);
+    surface = CreateSurface(instance.GetInstance(), window);
+    const vk::Format old_format = surface_format.format;
+    FindPresentFormat();
+    FindPresentMode();
+    if (surface_format.format != old_format && !needs_hdr) {
+        ImGui::Core::OnSurfaceFormatChange(surface_format.format);
+    }
+    std::printf("Swapchain: surface lost, created a new one on the window\n");
+    std::fflush(stdout);
+}
+
 void Swapchain::SetSurfaceProperties() {
-    const auto [capabilities_result, capabilities] =
+    auto [capabilities_result, capabilities] =
         instance.GetPhysicalDevice().getSurfaceCapabilitiesKHR(surface);
+    for (int attempt = 0;
+         capabilities_result == vk::Result::eErrorSurfaceLostKHR && attempt < 3; ++attempt) {
+        if (attempt > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        RecreateSurface();
+        std::tie(capabilities_result, capabilities) =
+            instance.GetPhysicalDevice().getSurfaceCapabilitiesKHR(surface);
+    }
     ASSERT_MSG(capabilities_result == vk::Result::eSuccess,
                "Failed to query surface capabilities: {}", vk::to_string(capabilities_result));
 
@@ -292,6 +322,7 @@ void Swapchain::Destroy() {
 
     if (swapchain) {
         device.destroySwapchainKHR(swapchain);
+        swapchain = nullptr;
     }
 
     for (const auto& sem : image_acquired) {
