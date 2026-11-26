@@ -231,7 +231,7 @@ Needs Python 3.10 or newer.
 
 1. Put the game folder `CUSA00552` next to this repository's folder, and the update next to it as
    `CUSA00552-patch` (or choose another update folder in the launcher's Folders window, or with
-   `TLOU_UPDATE=<folder>`; PLAY warns when the game has no update 1.11). An update you
+   `TLOU_UPDATE=<folder>`; that folder is optional when the update is merged into the game folder). An update you
    only have as a PKG unpacks there with `python tools/install_update.py <update.pkg> <game folder>`.
 2. Build the runtime (below), then start the game with `launcher/TLOU Launcher.exe`,
    `Start-TLOU.cmd`, or `python tools/probe_tlou.py --boot --seconds 0 [--game <game folder>]`.

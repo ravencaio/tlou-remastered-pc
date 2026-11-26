@@ -2056,12 +2056,12 @@ def merged_with_base_executable(game):
         return False
 
 
-# The update folder (Folders window, and the warning on PLAY when the game would run without update 1.11).
+# The update folder (Folders window; optional, PLAY does not check it).
 # Errors take the values shown: {} = a version, or the update's and the game's title ids.
 UPDATE_FOLDER_KEYS = ("update_folder update_no_files update_is_game update_not_update update_other_game update_version "
                "update_none update_missing update_chosen_bad update_play_anyway").split()
 UPDATE_FOLDER_TEXT = {
-    "pt": ["Atualização 1.11",
+    "pt": ["Pasta personalizada da atualização 1.11",
            "Esta pasta não tem eboot.bin e sce_sys\\param.sfo (nem numa pasta uroot dentro dela)",
            "Esta é a pasta do próprio jogo: escolha a da atualização",
            "Esta pasta tem um jogo, não uma atualização",
@@ -2073,7 +2073,7 @@ UPDATE_FOLDER_TEXT = {
            "nome {}-patch.",
            "A pasta da atualização não serve: {}.",
            "Jogar mesmo assim? (Não abre a janela Pastas.)"],
-    "en": ["Update 1.11",
+    "en": ["Custom 1.11 update folder",
            "This folder has no eboot.bin and sce_sys\\param.sfo (nor a uroot folder inside with them)",
            "This is the game folder itself: choose the update's",
            "This folder holds a game, not an update",
@@ -2084,7 +2084,7 @@ UPDATE_FOLDER_TEXT = {
            "during start. Choose the update's folder in Folders, or put it next to the game named {}-patch.",
            "The update folder can't be used: {}.",
            "Play anyway? (No opens the Folders window.)"],
-    "es": ["Actualización 1.11",
+    "es": ["Carpeta personalizada de la actualización 1.11",
            "Esta carpeta no tiene eboot.bin ni sce_sys\\param.sfo (ni una carpeta uroot dentro con ellos)",
            "Esta es la carpeta del propio juego: elige la de la actualización",
            "Esta carpeta tiene un juego, no una actualización",
@@ -2096,7 +2096,7 @@ UPDATE_FOLDER_TEXT = {
            "al juego con el nombre {}-patch.",
            "La carpeta de la actualización no sirve: {}.",
            "¿Jugar de todos modos? (No abre la ventana Carpetas.)"],
-    "fr": ["Mise à jour 1.11",
+    "fr": ["Dossier personnalisé de la mise à jour 1.11",
            "Ce dossier n'a pas d'eboot.bin ni de sce_sys\\param.sfo (ni de dossier uroot qui les contienne)",
            "C'est le dossier du jeu lui-même : choisissez celui de la mise à jour",
            "Ce dossier contient un jeu, pas une mise à jour",
@@ -2108,7 +2108,7 @@ UPDATE_FOLDER_TEXT = {
            "à côté du jeu sous le nom {}-patch.",
            "Le dossier de la mise à jour ne convient pas : {}.",
            "Jouer quand même ? (Non ouvre la fenêtre Dossiers.)"],
-    "de": ["Update 1.11",
+    "de": ["Eigener Ordner für Update 1.11",
            "Dieser Ordner hat keine eboot.bin und sce_sys\\param.sfo (auch keinen uroot-Ordner damit)",
            "Das ist der Spielordner selbst: Wähle den des Updates",
            "Dieser Ordner enthält ein Spiel, kein Update",
@@ -2120,7 +2120,7 @@ UPDATE_FOLDER_TEXT = {
            "Spiel mit dem Namen {}-patch.",
            "Der Update-Ordner ist nicht verwendbar: {}.",
            "Trotzdem spielen? (Nein öffnet das Fenster Ordner.)"],
-    "it": ["Aggiornamento 1.11",
+    "it": ["Cartella personalizzata dell'aggiornamento 1.11",
            "Questa cartella non ha eboot.bin e sce_sys\\param.sfo (né una cartella uroot che li contenga)",
            "Questa è la cartella del gioco: scegli quella dell'aggiornamento",
            "Questa cartella contiene un gioco, non un aggiornamento",
@@ -2132,7 +2132,7 @@ UPDATE_FOLDER_TEXT = {
            "accanto al gioco con il nome {}-patch.",
            "La cartella dell'aggiornamento non va bene: {}.",
            "Giocare comunque? (No apre la finestra Cartelle.)"],
-    "pl": ["Aktualizacja 1.11",
+    "pl": ["Własny folder aktualizacji 1.11",
            "Ten folder nie ma eboot.bin i sce_sys\\param.sfo (ani folderu uroot z nimi)",
            "To jest folder samej gry: wybierz folder aktualizacji",
            "Ten folder zawiera grę, a nie aktualizację",
@@ -2144,7 +2144,7 @@ UPDATE_FOLDER_TEXT = {
            "nazwą {}-patch.",
            "Folder aktualizacji nie nadaje się: {}.",
            "Grać mimo to? (Nie otwiera okno Foldery.)"],
-    "ru": ["Обновление 1.11",
+    "ru": ["Своя папка обновления 1.11",
            "В этой папке нет eboot.bin и sce_sys\\param.sfo (и нет папки uroot с ними)",
            "Это папка самой игры: выберите папку обновления",
            "В этой папке игра, а не обновление",
@@ -2156,7 +2156,7 @@ UPDATE_FOLDER_TEXT = {
            "под именем {}-patch.",
            "Папка обновления не подходит: {}.",
            "Всё равно играть? («Нет» открывает окно «Папки».)"],
-    "ja": ["アップデート 1.11",
+    "ja": ["1.11 アップデートのカスタムフォルダー",
            "このフォルダーには eboot.bin と sce_sys\\param.sfo がありません (中の uroot フォルダーにもありません)",
            "これはゲーム本体のフォルダーです。アップデートのフォルダーを選んでください",
            "このフォルダーはアップデートではなくゲーム本体です",
@@ -2215,18 +2215,15 @@ def found_update(game):
 
 
 def update_problem(folders):
-    """Why the game would run without update 1.11, as (text key, values); None when it has it: the
-    folder chosen, the one next to the game, or the update merged into the game folder (patch.psarc;
-    a merge that kept 1.00's eboot.bin is merged_with_base_executable's message)."""
+    """A note on the update folder in use (the one chosen, else the one next to the game), as
+    (text key, values); None when it looks like update 1.11 or when there is none. Only a note in
+    the Folders window: the update is optional (it may be merged into the game folder already)."""
     game = game_folder(folders)
-    if folders.get("update"):
-        _, problem = check_update_folder(folders["update"], game)
-        return problem and ("update_chosen_bad", problem)
-    update = found_update(game)
-    if update is not None:
-        _, problem = check_update_folder(update, game)
-        return problem and ("update_chosen_bad", problem)
-    return None if (game / "patch.psarc").is_file() else ("update_missing", game.name)
+    update = folders.get("update") or found_update(game)
+    if update is None:
+        return None
+    _, problem = check_update_folder(update, game)
+    return problem and ("update_chosen_bad", problem)
 
 BG, PANEL, TEXT, MUTED, ACCENT, ACCENT_HOT = "#090909", "#141414", "#ece9e2", "#8f8f88", "#c8862a", "#e4a23f"
 DISABLED, ERROR = "#2b2b2b", "#e06c5a"
@@ -3444,12 +3441,6 @@ class Launcher(tk.Tk):
         if merged_with_base_executable(game):
             messagebox.showerror(self.title(), self.t("merged_old_exe").format(game.name), parent=self)
             return
-        problem = update_problem(self.folders)
-        if problem and not messagebox.askyesno(self.title(), self.problem_text(problem) + "\n\n"
-                                               + self.t("update_play_anyway"), icon="warning", default="no",
-                                               parent=self):
-            self.open_folders()
-            return
         self.play_button.config(state="disabled", text=self.t("starting"), bg=DISABLED)
         env = game_env(self.switches(), overrides=self.overrides, folders=self.folders)
         if self.profile.get():
@@ -4396,8 +4387,8 @@ class Launcher(tk.Tk):
         def default_path():
             if key != "update":
                 return str(default)
-            game = game_folder(self.folders)   # the one probe_tlou.py would find, else the name it looks for
-            return str(found_update(game) or game.parent / (game.name + "-patch"))
+            found = found_update(game_folder(self.folders))   # the one probe_tlou.py would find, else none
+            return str(found) if found else ""
 
         shown = tk.StringVar(value=self.folders.get(key) or default_path())
         tk.Entry(area, textvariable=shown, state="readonly", readonlybackground=PANEL, fg=TEXT, bd=0, width=70,
@@ -4406,12 +4397,10 @@ class Launcher(tk.Tk):
         error.grid(row=2, column=0, sticky="w")
 
         def update_state():
-            """The update row: its folder and whether the game would run without update 1.11."""
+            """The update row: its folder, and a note (never a block) when it does not look like 1.11."""
             shown.set(self.folders.get("update") or default_path())
             problem = update_problem(self.folders)
-            if problem and problem[0] == "update_missing":
-                problem = ("update_none",)
-            error.config(text=problem and self.problem_text(problem) or "", fg=ERROR)
+            error.config(text=problem and self.problem_text(problem) or "", fg=MUTED)
 
         def change(value):
             if key == "game" and value and not (Path(value) / "eboot.bin").is_file():
@@ -4419,9 +4408,11 @@ class Launcher(tk.Tk):
                 return
             if key == "update" and value:
                 root, problem = check_update_folder(value, game_folder(self.folders))
-                if problem:
-                    error.config(text=self.problem_text(problem), fg=ERROR)
+                if problem and problem[0] in ("update_no_files", "update_is_game"):
+                    error.config(text=self.problem_text(problem), fg=ERROR)   # nothing probe_tlou.py could use
                     return
+                if root is None:   # the other checks (category, title id, version) only note, see update_state
+                    root = next(c for c in (Path(value) / "uroot", Path(value)) if (c / "eboot.bin").is_file())
                 value = str(root)   # its uroot when the folder chosen holds one
             error.config(text="", fg=ERROR)
             if value:
