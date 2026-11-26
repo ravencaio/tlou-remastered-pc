@@ -451,8 +451,14 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
         // Spin briefly before sleeping: the next chunk usually follows within microseconds,
         // and a sleeping recorder costs the GPU thread a wake-up syscall per kick. With few
         // hardware threads (Steam Deck: 8) the spin would take time from guest threads.
-        static const auto spin_time = std::chrono::microseconds(
-            Gow3Threads::Available() >= 12 ? 200 : 20);
+        // gow3 26 Nov 2026: GOW3_RECORDER_SPIN_US overrides (a laptop's integrated GPU shares the
+        // package's power with the cores: a spinning core can lower the GPU's clock).
+        static const auto spin_time = std::chrono::microseconds([] {
+            if (const char* env = std::getenv("GOW3_RECORDER_SPIN_US")) {
+                return std::clamp(std::atoi(env), 0, 2000);
+            }
+            return Gow3Threads::Available() >= 12 ? 200 : 20;
+        }());
         const auto spin_until = std::chrono::steady_clock::now() + spin_time;
         for (u32 spins = 1; queued_chunks.load(std::memory_order_acquire) == 0; ++spins) {
             __builtin_ia32_pause();

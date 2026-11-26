@@ -1006,12 +1006,17 @@ private:
     std::deque<std::unique_ptr<RecordChunk>> recorder_queue;
     std::vector<std::unique_ptr<RecordChunk>> free_chunks;
     bool recorder_busy = false;
-    std::atomic<size_t> queued_chunks{0}; ///< recorder_queue.size() for lock-free polling
+    /// recorder_queue.size() for lock-free polling. gow3 26 Nov 2026 (the Driveclub port's
+    /// 5eb14cf): written by both threads at every hand-off, so a cache line of its own.
+    alignas(64) std::atomic<size_t> queued_chunks{0};
+    char queued_chunks_line[56]{};
     bool recorder_sleeping = false; ///< waiting on recorder_cv (guarded by recorder_mutex)
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
     bool checkpoint_callers = false; ///< GOW3_GPU_CHECKPOINTS=2: marks CommandBuffer() callers
     u64 host_copies_issued = 0;
-    std::atomic<u64> host_copies_done{0};
+    /// gow3 26 Nov 2026: written by the recording thread after each host copy; own cache line.
+    alignas(64) std::atomic<u64> host_copies_done{0};
+    char host_copies_done_line[56]{};
     std::atomic<u64> guest_write_epoch{0};
     std::atomic<u64> deferred_signals_issued{0}; ///< by the thread recording (A or B)
     std::shared_ptr<std::atomic<u64>> deferred_signals_done =

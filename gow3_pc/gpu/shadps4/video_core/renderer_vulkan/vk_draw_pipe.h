@@ -159,7 +159,10 @@ public:
     /// Statistics (stage A): packets, drains that had to wait, cycles waited, cycles stage B
     /// spent running packets.
     u64 packets = 0, drains = 0, drain_cycles = 0;
-    std::atomic<u64> busy_cycles{0};
+    /// gow3 26 Nov 2026 (the Driveclub port's 5eb14cf): stage B adds to it after every packet;
+    /// a cache line of its own, apart from stage A's counters around it.
+    alignas(64) std::atomic<u64> busy_cycles{0};
+    char busy_cycles_line[56]{};
 
 private:
     struct Header {
