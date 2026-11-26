@@ -47,7 +47,7 @@ rm -rf -- "$stage/gow3_pc/out/pydeps/iced_x86/__pycache__"   # (paths of this ma
 find "$stage/gow3_pc/out/pydeps/iced_x86" -name '*.py' -delete
 rm -f -- "$stage/gow3_pc/out/pydeps/iced_x86/_iced_x86_py.pyi"
 cp gow3_pc/scripts/*.py "$stage/gow3_pc/scripts/"
-cp tools/probe_tlou.py tools/run_game.py tools/apply_update.py tools/gow3_data.py "$stage/tools/"
+cp tools/probe_tlou.py tools/run_game.py tools/apply_update.py tools/gow3_data.py tools/tlou_render_settings.py "$stage/tools/"
 cp launcher/tlou_launcher.pyw launcher/updater.py "$stage/launcher/"
 # The starters, without the icon: the icon is the game's cover.
 bash launcher/build-starters.sh "$stage/TLOU Launcher.exe" "$stage/TLOU Game.exe"

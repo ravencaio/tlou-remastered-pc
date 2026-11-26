@@ -154,6 +154,29 @@ def job_sleep_wait_patch():
     if not 1 <= ms <= 127 or ms == 10:
         return []
     return [(0xC87D9F, "BA0A000000", "BA" + ms.to_bytes(4, "little").hex().upper())]
+# Lighter effects (TLOU_LIGHT_EFFECTS=1, off by default): the game's own render settings
+# (tools/tlou_render_settings.py) for effects that cost GPU time, turned down. The runtime writes
+# them into every area's and cutscene's settings (src/runtime_render_settings.h).
+# (offset in render-settings, f/i/b, value, name)
+LIGHT_EFFECTS = []
+
+
+def render_settings_file(user, out):
+    """The render settings overrides for this run: the lighter-effects preset (TLOU_LIGHT_EFFECTS=1),
+    then the player's own (user/render-settings.txt, or the file TLOU_RENDER_SETTINGS names; "none"
+    for none), which win. None when there are none."""
+    lines = []
+    if os.environ.get("TLOU_LIGHT_EFFECTS") == "1":
+        lines += [f"{offset:#06x} {kind} {value} {name}" for offset, kind, value, name in LIGHT_EFFECTS]
+    chosen = os.environ.get("TLOU_RENDER_SETTINGS") or str(user / "render-settings.txt")
+    if chosen != "none" and Path(chosen).is_file():
+        lines += Path(chosen).read_text(encoding="utf-8", errors="replace").splitlines()
+    if not any(line.split("#")[0].strip() for line in lines):
+        return None
+    path = out / "render-settings.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 # Every language in the game's menus (issue #156; TLOU_ALL_LANGUAGES=0 keeps the Americas set). The
 # executable holds one product config per regional release (product-config.cpp, registered at
 # 0x41340) and picks it by USER_DEFINED_PARAM_1 of param.sfo (552 here). Its language mask (+0x1b0)
@@ -817,6 +840,9 @@ def main():
           + (f" ({extra} MiB more for its render targets)" if extra else ""), flush=True)
     if red_zone:
         command += ["--red-zone", str(red_zone)]
+    render_settings = render_settings_file(user, out)
+    if render_settings:
+        command += ["--render-settings", str(render_settings)]
     if not args.boot:
         command.append("--check-imports")
     if args.cpu_only:

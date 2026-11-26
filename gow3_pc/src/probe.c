@@ -19,6 +19,7 @@
 #include "near_gap.h"
 #include "runtime_mouselook.h"
 #include "runtime_gamesettings.h"
+#include "runtime_render_settings.h"
 #include "gpu/gow3gpu.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error This prototype requires x86-64 GCC or Clang (including MinGW).
@@ -1100,6 +1101,112 @@ static void install_stat_multipliers(Segment *segments, uint64_t count, uint64_t
     printf("Multipliers: damage %s, green/blue/gold orbs %s\n", damage ? "ready" : "unavailable",
            pickup ? "ready" : "unavailable");
 }
+/* Render settings overrides (src/runtime_render_settings.h). The Last of Us Remastered 1.11 has
+ * the DC module relocation (check "00CD", add the module's address to each word its bitmap marks)
+ * three times: inline in the module loader (0xBC6658; right after it, at 0xBC672F, the loader reads
+ * the module's entry count and entries from r8 = the module) and in two functions that return
+ * the module + 0x10 (0xBC69F0 in r14 and 0xBC7030 in r13, both leaving through
+ * `mov rax, reg; add rsp, 0x18`). Each site's first whole instructions (7 or 8 bytes, no branch
+ * lands inside them) become a jump to a stub that keeps every register, xmm0-15, the flags and
+ * the red zone, aligns the stack, calls the handler with the module + 0x10, replays them and
+ * jumps back. The handler writes nothing unless the module starts with "00CD". */
+typedef struct {
+    uint64_t offset;
+    unsigned length;                    /* bytes replaced and replayed */
+    unsigned char expected[16];         /* those, then the next instructions, checked */
+    unsigned char argument[4];          /* sets rdi to the module + 0x10 */
+} RenderSettingsSite;
+static const RenderSettingsSite render_settings_sites[] = {
+    {0xbc672f, 8, {0x4c, 0x8b, 0x65, 0xb8, 0x49, 0x63, 0x48, 0x14, 0x48, 0x85, 0xc9, 0x41, 0x89, 0x4c, 0x24, 0x30},
+     {0x49, 0x8d, 0x78, 0x10}},       /* lea rdi, [r8 + 0x10] */
+    {0xbc6adc, 7, {0x4c, 0x89, 0xf0, 0x48, 0x83, 0xc4, 0x18, 0x5b, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f},
+     {0x4c, 0x89, 0xf7, 0x90}},       /* mov rdi, r14 */
+    {0xbc7131, 7, {0x4c, 0x89, 0xe8, 0x48, 0x83, 0xc4, 0x18, 0x5b, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f},
+     {0x4c, 0x89, 0xef, 0x90}},       /* mov rdi, r13 */
+};
+static unsigned build_render_settings_stub(unsigned char *p, const RenderSettingsSite *site, uintptr_t resume) {
+    static const unsigned char save[] = {
+        0x48, 0x8d, 0x64, 0x24, 0x80,                   /* lea rsp, [rsp - 128]: the red zone */
+        0x9c, 0x50, 0x51, 0x52, 0x56, 0x57,             /* pushfq; push rax, rcx, rdx, rsi, rdi */
+        0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53, /* push r8-r11 */
+        0x53, 0x48, 0x89, 0xe3,                         /* push rbx; mov rbx, rsp */
+        0x48, 0x83, 0xe4, 0xf0,                         /* and rsp, -16 */
+        0x48, 0x81, 0xec, 0x00, 0x01, 0x00, 0x00,       /* sub rsp, 256 */
+    };
+    static const unsigned char restore[] = {
+        0x48, 0x89, 0xdc, 0x5b,                         /* mov rsp, rbx; pop rbx */
+        0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58, /* pop r11-r8 */
+        0x5f, 0x5e, 0x5a, 0x59, 0x58, 0x9d,             /* pop rdi, rsi, rdx, rcx, rax; popfq */
+        0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, /* lea rsp, [rsp + 128] */
+    };
+    unsigned n = 0;
+    memcpy(p + n, save, sizeof(save)); n += sizeof(save);
+    for (int store = 1; store >= 0; --store) {
+        if (!store) {
+            memcpy(p + n, site->argument, sizeof(site->argument)); n += sizeof(site->argument);
+            p[n++] = 0x48; p[n++] = 0xb8;               /* mov rax, handler */
+            const uint64_t handler = (uint64_t)(uintptr_t)runtime_render_settings_module;
+            memcpy(p + n, &handler, 8); n += 8;
+            p[n++] = 0xff; p[n++] = 0xd0;               /* call rax */
+        }
+        for (unsigned i = 0; i < 16; ++i) {             /* movdqu [rsp + 16i], xmm_i (or back) */
+            p[n++] = 0xf3;
+            if (i >= 8) p[n++] = 0x44;
+            p[n++] = 0x0f; p[n++] = store ? 0x7f : 0x6f;
+            p[n++] = (unsigned char)(0x84 | ((i & 7) << 3)); p[n++] = 0x24;
+            const uint32_t displacement = 16 * i;
+            memcpy(p + n, &displacement, 4); n += 4;
+        }
+    }
+    memcpy(p + n, restore, sizeof(restore)); n += sizeof(restore);
+    memcpy(p + n, site->expected, site->length); n += site->length;
+    static const unsigned char jump[] = {0xff, 0x25, 0x00, 0x00, 0x00, 0x00}; /* jmp [rip+0] */
+    memcpy(p + n, jump, sizeof(jump)); n += sizeof(jump);
+    const uint64_t target = (uint64_t)resume;
+    memcpy(p + n, &target, 8); n += 8;
+    return n;
+}
+static void install_render_settings(Segment *segments, uint64_t count, uint64_t size, const char *path) {
+    enum { SITES = sizeof(render_settings_sites) / sizeof(render_settings_sites[0]), STUB = 512 };
+    const unsigned overrides = runtime_render_settings_load(path);
+    if (!overrides) {
+        printf("Render settings: no overrides in %s\n", path);
+        return;
+    }
+    /* The menu hooks (install_menu_exit, before this) may own the loader's site: their handler
+     * passes each module on (runtime_menu_exit_data_loaded), so that site is left to them. */
+    int shared[SITES] = {0};
+    for (unsigned i = 0; i < SITES; ++i) {
+        const RenderSettingsSite *site = &render_settings_sites[i];
+        const int in_image = site->offset + sizeof(site->expected) <= size &&
+                             mapped(segments, count, site->offset, sizeof(site->expected));
+        shared[i] = in_image && i == 0 && image[site->offset] == 0xe9 &&
+                    !memcmp(image + site->offset + site->length, site->expected + site->length,
+                            sizeof(site->expected) - site->length);
+        if (!shared[i] && (!in_image || memcmp(image + site->offset, site->expected, sizeof(site->expected)))) {
+            printf("Render settings: overrides unavailable (not version 1.11's DC module loader at %#" PRIx64 ")\n",
+                   site->offset);
+            return;
+        }
+    }
+    unsigned char *stubs = allocate_near_image(size);
+    if (!stubs) {
+        puts("Render settings: overrides unavailable (no stub page in range)");
+        return;
+    }
+    for (unsigned i = 0; i < SITES; ++i)
+        if (!shared[i])
+            build_render_settings_stub(stubs + i * STUB, &render_settings_sites[i],
+                                       (uintptr_t)(image + render_settings_sites[i].offset + render_settings_sites[i].length));
+    protect(stubs, page_size, 5);
+    for (unsigned i = 0; i < SITES; ++i) {
+        const RenderSettingsSite *site = &render_settings_sites[i];
+        if (!shared[i] && !install_jump(site->offset, site->length, stubs + i * STUB))
+            puts("Render settings: a hook is out of range; the overrides may miss some modules");
+    }
+    printf("Render settings: %u overrides from %s (hooks in the DC module loader%s)\n", overrides, path,
+           shared[0] ? ", one shared with the menu hooks" : "");
+}
 /* QUIT in the lobby and the pause menu (src/menu_exit_hook.h): the menu data gets the button as it
  * loads, and the dispatcher tells the runtime when it is pressed. GOW3_MENU_EXIT=0 installs none of the menu
  * hooks (QUIT, the PC SETTINGS page, the native save list). */
@@ -1345,7 +1452,7 @@ int main(int argc, char **argv) {
     const char *guest_argv[17]={"/app0/eboot.bin"};
     int guest_argc=1;
     unsigned timeout_seconds = 10;
-    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *red_zone_file=NULL;
+    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *red_zone_file=NULL, *render_settings_file=NULL;
     const char *app0_overlays[4]; int app0_overlay_count=0;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "--cpu-only")) cpu_only = 1;
@@ -1362,6 +1469,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--user") && i+1<argc) user_dir=argv[++i];
         else if (!strcmp(argv[i], "--patches") && i+1<argc) patch_file=argv[++i];
         else if (!strcmp(argv[i], "--red-zone") && i+1<argc) red_zone_file=argv[++i];
+        else if (!strcmp(argv[i], "--render-settings") && i+1<argc) render_settings_file=argv[++i];
         else if (!strcmp(argv[i], "--timeout") && i+1<argc) timeout_seconds=(unsigned)strtoul(argv[++i],NULL,10);
         else if (!strcmp(argv[i], "--guest-path") && i+1<argc) guest_argv[0]=argv[++i];
         else if (!strcmp(argv[i], "--guest-arg") && i+1<argc) {
@@ -1371,7 +1479,7 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return 1; }
     }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--no-game-hooks] [--content-profile file] [--app0 dir] [--app0-overlay dir]... [--user dir] [--patches file] [--timeout seconds] [--guest-path /app0/file] [--guest-arg value]... | --vulkan-only\n", argv[0]);
+        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--no-game-hooks] [--content-profile file] [--app0 dir] [--app0-overlay dir]... [--user dir] [--patches file] [--render-settings file] [--timeout seconds] [--guest-path /app0/file] [--guest-arg value]... | --vulkan-only\n", argv[0]);
         return 1;
     }
     /* The guest code needs the PS4's instruction sets (#33, #66); GOW3_CPU_CHECK=0 skips this. */
@@ -1613,6 +1721,7 @@ int main(int argc, char **argv) {
     if (gpu_enabled) install_mouse_look(segments, ns, size);
     if (gpu_enabled) install_stick_boost(segments, ns, size);
     if (gpu_enabled) install_menu_exit(segments, ns, size);
+    if (render_settings_file) install_render_settings(segments, ns, size, render_settings_file);
     runtime_gamesettings_set_image(image, size);
     if (gpu_enabled && game_hooks) {
         install_orb_multiplier(segments, ns, size);

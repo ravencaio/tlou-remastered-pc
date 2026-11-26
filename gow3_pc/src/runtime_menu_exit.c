@@ -2,6 +2,7 @@
 #include "gpu/gow3gpu.h"
 #include "runtime_menu_pc.h"
 #include "runtime_menu_saves.h"
+#include "runtime_render_settings.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -108,6 +109,8 @@ static int patch(unsigned char *data, uint64_t size, unsigned char *space, size_
 }
 
 ABI void runtime_menu_exit_data_loaded(unsigned char *data) {
+    /* The render settings overrides share this hook: it is on the DC module loader's path. */
+    if (data) runtime_render_settings_module(data + 0x10);
     if (!data || !arena || gow3_menu_u32(data) != DATA_MAGIC) return;
     const uint64_t size = gow3_menu_u32(data + 8);
     if (size < DATA_MIN || size > DATA_MAX) return;

@@ -75,7 +75,7 @@ find "$stage/python" "$stage/gow3_pc/out/pydeps" -name __pycache__ -type d -prun
 find "$stage/python/bin" -maxdepth 1 \( -name 'pip*' -o -name 'idle*' -o -name 'pydoc*' -o -name '2to3*' \) -delete
 
 cp gow3_pc/scripts/*.py "$stage/gow3_pc/scripts/"
-cp tools/probe_tlou.py tools/run_game.py tools/apply_update.py tools/gow3_data.py "$stage/tools/"
+cp tools/probe_tlou.py tools/run_game.py tools/apply_update.py tools/gow3_data.py tools/tlou_render_settings.py "$stage/tools/"
 cp launcher/tlou_launcher.pyw launcher/updater.py "$stage/launcher/"
 
 # The starters: the package's Python on the launcher and on run_game.py (TLOU Game.exe's job).
