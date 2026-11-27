@@ -1527,8 +1527,8 @@ CONTROL_TEXT = {
 # The art is the player's own dump's (sce_sys), read at run time: no game file in the repository.
 ART = ["sce_sys/pic1.png", "sce_sys/pic0.png"]
 # Folders the player can change; empty is the default. {key: (text key, default)}.
-FOLDERS = {"game": ("game_folder", GAME), "update": ("update_folder", None), "saves": ("saves_folder", USER),
-           "cache": ("cache_folder", USER / "cache")}   # the update's default is found next to the game folder
+FOLDERS = {"game": ("game_folder", GAME), "saves": ("saves_folder", USER), "cache": ("cache_folder", USER / "cache")}
+# The update is the one next to the game folder (tools/probe_tlou.py find_update).
 UI_LANGUAGES = {"pt": "Português", "en": "English", "es": "Español", "fr": "Français", "de": "Deutsch",
                 "it": "Italiano", "pl": "Polski", "ru": "Русский", "ja": "日本語"}
 KEYS = ("subtitle video game language ui_language display resolution fps upscaler quality vsync show_fps "
@@ -1552,7 +1552,7 @@ TEXT_TABLE = {
            "Cache de shaders",
            "Procurar",
            "Padrão",
-           "Sem uma pasta escolhida, a atualização é procurada ao lado da pasta do jogo, com '-patch' no nome. Mudar a pasta de saves ou de cache não move os arquivos: o jogo começa sem saves, ou recompila os shaders.",
+           "A atualização é procurada ao lado da pasta do jogo, com '-patch' no nome. Mudar a pasta de saves ou de cache não move os arquivos: o jogo começa sem saves, ou recompila os shaders.",
            "Esta pasta não tem eboot.bin",
            "Compilar shaders em segundo plano", "Controles", "Sombras do PS4 Pro (maior resolução)"],
     "en": ["PC port", "Video", "Game", "Language", "Launcher language", "Display mode", "Resolution",
@@ -1569,7 +1569,7 @@ TEXT_TABLE = {
            "Shader cache",
            "Browse",
            "Default",
-           "Without a folder chosen, the update is looked for beside the game folder, with '-patch' in its name. Changing the saves or cache folder does not move the files: the game starts with no saves, or compiles its shaders again.",
+           "The update is looked for beside the game folder, with '-patch' in its name. Changing the saves or cache folder does not move the files: the game starts with no saves, or compiles its shaders again.",
            "This folder has no eboot.bin",
            "Compile shaders in the background", "Controls", "PS4 Pro shadows (higher resolution)"],
     "es": ["Port para PC", "Vídeo", "Juego", "Idioma", "Idioma del launcher", "Modo de pantalla",
@@ -1587,7 +1587,7 @@ TEXT_TABLE = {
            "Caché de shaders",
            "Examinar",
            "Predeterminada",
-           "Sin una carpeta elegida, la actualización se busca junto a la carpeta del juego, con '-patch' en el nombre. Cambiar la carpeta de partidas o de caché no mueve los archivos: el juego empieza sin partidas o vuelve a compilar los shaders.",
+           "La actualización se busca junto a la carpeta del juego, con '-patch' en el nombre. Cambiar la carpeta de partidas o de caché no mueve los archivos: el juego empieza sin partidas o vuelve a compilar los shaders.",
            "Esta carpeta no tiene eboot.bin",
            "Compilar shaders en segundo plano", "Controles", "Sombras de PS4 Pro (mayor resolución)"],
     "fr": ["Portage PC", "Vidéo", "Jeu", "Langue", "Langue du launcher", "Mode d'affichage", "Résolution",
@@ -1605,7 +1605,7 @@ TEXT_TABLE = {
            "Cache des shaders",
            "Parcourir",
            "Par défaut",
-           "Sans dossier choisi, la mise à jour est cherchée à côté du dossier du jeu, avec '-patch' dans son nom. Changer le dossier des sauvegardes ou du cache ne déplace pas les fichiers : le jeu démarre sans sauvegardes ou recompile ses shaders.",
+           "La mise à jour est cherchée à côté du dossier du jeu, avec '-patch' dans son nom. Changer le dossier des sauvegardes ou du cache ne déplace pas les fichiers : le jeu démarre sans sauvegardes ou recompile ses shaders.",
            "Ce dossier ne contient pas eboot.bin",
            "Compiler les shaders en arrière-plan", "Commandes", "Ombres de la PS4 Pro (meilleure résolution)"],
     "de": ["PC-Port", "Video", "Spiel", "Sprache", "Launcher-Sprache", "Anzeigemodus", "Auflösung", "FPS-Limit",
@@ -1623,7 +1623,7 @@ TEXT_TABLE = {
            "Shader-Cache",
            "Durchsuchen",
            "Standard",
-           "Ohne gewählten Ordner wird das Update neben dem Spielordner gesucht, mit '-patch' im Namen. Ein anderer Ordner für Spielstände oder Cache verschiebt die Dateien nicht: Das Spiel startet ohne Spielstände oder kompiliert die Shader neu.",
+           "Das Update wird neben dem Spielordner gesucht, mit '-patch' im Namen. Ein anderer Ordner für Spielstände oder Cache verschiebt die Dateien nicht: Das Spiel startet ohne Spielstände oder kompiliert die Shader neu.",
            "Dieser Ordner enthält keine eboot.bin",
            "Shader im Hintergrund kompilieren", "Steuerung", "PS4-Pro-Schatten (höhere Auflösung)"],
     "it": ["Port per PC", "Video", "Gioco", "Lingua", "Lingua del launcher", "Modalità schermo",
@@ -1641,7 +1641,7 @@ TEXT_TABLE = {
            "Cache degli shader",
            "Sfoglia",
            "Predefinita",
-           "Senza una cartella scelta, l'aggiornamento viene cercato accanto alla cartella del gioco, con '-patch' nel nome. Cambiare la cartella dei salvataggi o della cache non sposta i file: il gioco parte senza salvataggi o ricompila gli shader.",
+           "L'aggiornamento viene cercato accanto alla cartella del gioco, con '-patch' nel nome. Cambiare la cartella dei salvataggi o della cache non sposta i file: il gioco parte senza salvataggi o ricompila gli shader.",
            "Questa cartella non contiene eboot.bin",
            "Compila gli shader in background", "Comandi", "Ombre di PS4 Pro (risoluzione più alta)"],
     "pl": ["Port na PC", "Obraz", "Gra", "Język", "Język launchera", "Tryb ekranu", "Rozdzielczość", "Limit FPS",
@@ -1658,7 +1658,7 @@ TEXT_TABLE = {
            "Pamięć podręczna shaderów",
            "Przeglądaj",
            "Domyślny",
-           "Bez wybranego folderu aktualizacja jest szukana obok folderu gry, z '-patch' w nazwie. Zmiana folderu zapisów lub pamięci podręcznej nie przenosi plików: gra zacznie bez zapisów albo ponownie skompiluje shadery.",
+           "Aktualizacja jest szukana obok folderu gry, z '-patch' w nazwie. Zmiana folderu zapisów lub pamięci podręcznej nie przenosi plików: gra zacznie bez zapisów albo ponownie skompiluje shadery.",
            "Ten folder nie zawiera eboot.bin",
            "Kompiluj shadery w tle", "Sterowanie", "Cienie z PS4 Pro (wyższa rozdzielczość)"],
     "ru": ["Порт для ПК", "Видео", "Игра", "Язык", "Язык лаунчера", "Режим экрана", "Разрешение", "Лимит FPS",
@@ -1676,7 +1676,7 @@ TEXT_TABLE = {
            "Кэш шейдеров",
            "Обзор",
            "По умолчанию",
-           "Если папка не выбрана, обновление ищется рядом с папкой игры, с '-patch' в имени. Смена папки сохранений или кэша не переносит файлы: игра начнётся без сохранений или заново скомпилирует шейдеры.",
+           "Обновление ищется рядом с папкой игры, с '-patch' в имени. Смена папки сохранений или кэша не переносит файлы: игра начнётся без сохранений или заново скомпилирует шейдеры.",
            "В этой папке нет eboot.bin",
            "Компилировать шейдеры в фоне", "Управление", "Тени PS4 Pro (более высокое разрешение)"],
     "ja": ["PC移植版", "映像", "ゲーム", "言語", "ランチャーの言語", "表示モード", "解像度", "FPS上限", "アップスケーラー",
@@ -1692,7 +1692,7 @@ TEXT_TABLE = {
            "シェーダーキャッシュ",
            "参照",
            "既定",
-           "フォルダーを選んでいない場合、アップデートはゲームフォルダーの隣にある名前に「-patch」が付いたフォルダーから探します。セーブやキャッシュのフォルダーを変更してもファイルは移動しません。セーブなしで始まるか、シェーダーが再コンパイルされます。",
+           "アップデートはゲームフォルダーの隣にある名前に「-patch」が付いたフォルダーから探します。セーブやキャッシュのフォルダーを変更してもファイルは移動しません。セーブなしで始まるか、シェーダーが再コンパイルされます。",
            "このフォルダーには eboot.bin がありません",
            "シェーダーをバックグラウンドでコンパイル", "操作設定", "PS4 Proの影(高解像度)"],
 }
@@ -2115,121 +2115,35 @@ def merged_with_base_executable(game):
         return False
 
 
-# The update folder (Folders window; optional, PLAY does not check it).
-# Errors take the values shown: {} = a version, or the update's and the game's title ids.
-UPDATE_FOLDER_KEYS = ("update_folder update_no_files update_is_game update_not_update update_other_game update_version "
-               "update_none update_missing update_chosen_bad update_play_anyway").split()
-UPDATE_FOLDER_TEXT = {
-    "pt": ["Pasta personalizada da atualização 1.11",
-           "Esta pasta não tem eboot.bin e sce_sys\\param.sfo (nem numa pasta uroot dentro dela)",
-           "Esta é a pasta do próprio jogo: escolha a da atualização",
-           "Esta pasta tem um jogo, não uma atualização",
-           "Esta atualização é de {}, e o jogo é {}: use a atualização da mesma região",
-           "Esta atualização é a versão {}, e o port precisa da 1.11",
-           "Nenhuma atualização encontrada: o jogo não inicia sem a 1.11",
-           "A atualização 1.11 não foi encontrada.\n\nO port só roda o executável da versão 1.11: sem ela o jogo "
-           "para durante o início. Escolha a pasta da atualização em Pastas, ou coloque-a ao lado do jogo com o "
-           "nome {}-patch.",
-           "A pasta da atualização não serve: {}.",
-           "Jogar mesmo assim? (Não abre a janela Pastas.)"],
-    "en": ["Custom 1.11 update folder",
-           "This folder has no eboot.bin and sce_sys\\param.sfo (nor a uroot folder inside with them)",
-           "This is the game folder itself: choose the update's",
-           "This folder holds a game, not an update",
-           "This update is for {}, and the game is {}: use the update of the same region",
-           "This update is version {}, and the port needs 1.11",
-           "No update found: the game does not start without 1.11",
-           "Update 1.11 was not found.\n\nThe port only runs version 1.11's executable: without it the game stops "
-           "during start. Choose the update's folder in Folders, or put it next to the game named {}-patch.",
-           "The update folder can't be used: {}.",
-           "Play anyway? (No opens the Folders window.)"],
-    "es": ["Carpeta personalizada de la actualización 1.11",
-           "Esta carpeta no tiene eboot.bin ni sce_sys\\param.sfo (ni una carpeta uroot dentro con ellos)",
-           "Esta es la carpeta del propio juego: elige la de la actualización",
-           "Esta carpeta tiene un juego, no una actualización",
-           "Esta actualización es de {}, y el juego es {}: usa la actualización de la misma región",
-           "Esta actualización es la versión {}, y el port necesita la 1.11",
-           "No se encontró ninguna actualización: el juego no inicia sin la 1.11",
-           "No se encontró la actualización 1.11.\n\nEl port solo ejecuta el ejecutable de la versión 1.11: sin "
-           "ella el juego se detiene al iniciar. Elige la carpeta de la actualización en Carpetas, o ponla junto "
-           "al juego con el nombre {}-patch.",
-           "La carpeta de la actualización no sirve: {}.",
-           "¿Jugar de todos modos? (No abre la ventana Carpetas.)"],
-    "fr": ["Dossier personnalisé de la mise à jour 1.11",
-           "Ce dossier n'a pas d'eboot.bin ni de sce_sys\\param.sfo (ni de dossier uroot qui les contienne)",
-           "C'est le dossier du jeu lui-même : choisissez celui de la mise à jour",
-           "Ce dossier contient un jeu, pas une mise à jour",
-           "Cette mise à jour est pour {}, et le jeu est {} : utilisez la mise à jour de la même région",
-           "Cette mise à jour est la version {}, et le port a besoin de la 1.11",
-           "Aucune mise à jour trouvée : le jeu ne démarre pas sans la 1.11",
-           "La mise à jour 1.11 est introuvable.\n\nLe port n'exécute que l'exécutable de la version 1.11 : sans "
-           "elle, le jeu s'arrête au démarrage. Choisissez le dossier de la mise à jour dans Dossiers, ou placez-le "
-           "à côté du jeu sous le nom {}-patch.",
-           "Le dossier de la mise à jour ne convient pas : {}.",
-           "Jouer quand même ? (Non ouvre la fenêtre Dossiers.)"],
-    "de": ["Eigener Ordner für Update 1.11",
-           "Dieser Ordner hat keine eboot.bin und sce_sys\\param.sfo (auch keinen uroot-Ordner damit)",
-           "Das ist der Spielordner selbst: Wähle den des Updates",
-           "Dieser Ordner enthält ein Spiel, kein Update",
-           "Dieses Update ist für {}, das Spiel ist {}: Nimm das Update derselben Region",
-           "Dieses Update ist Version {}, der Port braucht 1.11",
-           "Kein Update gefunden: Ohne 1.11 startet das Spiel nicht",
-           "Update 1.11 wurde nicht gefunden.\n\nDer Port startet nur die ausführbare Datei von Version 1.11: Ohne "
-           "sie hält das Spiel beim Start an. Wähle den Ordner des Updates unter Ordner, oder lege ihn neben das "
-           "Spiel mit dem Namen {}-patch.",
-           "Der Update-Ordner ist nicht verwendbar: {}.",
-           "Trotzdem spielen? (Nein öffnet das Fenster Ordner.)"],
-    "it": ["Cartella personalizzata dell'aggiornamento 1.11",
-           "Questa cartella non ha eboot.bin e sce_sys\\param.sfo (né una cartella uroot che li contenga)",
-           "Questa è la cartella del gioco: scegli quella dell'aggiornamento",
-           "Questa cartella contiene un gioco, non un aggiornamento",
-           "Questo aggiornamento è per {}, e il gioco è {}: usa l'aggiornamento della stessa regione",
-           "Questo aggiornamento è la versione {}, e il port richiede la 1.11",
-           "Nessun aggiornamento trovato: il gioco non si avvia senza la 1.11",
-           "L'aggiornamento 1.11 non è stato trovato.\n\nIl port avvia solo l'eseguibile della versione 1.11: senza "
-           "di esso il gioco si ferma all'avvio. Scegli la cartella dell'aggiornamento in Cartelle, oppure mettila "
-           "accanto al gioco con il nome {}-patch.",
-           "La cartella dell'aggiornamento non va bene: {}.",
-           "Giocare comunque? (No apre la finestra Cartelle.)"],
-    "pl": ["Własny folder aktualizacji 1.11",
-           "Ten folder nie ma eboot.bin i sce_sys\\param.sfo (ani folderu uroot z nimi)",
-           "To jest folder samej gry: wybierz folder aktualizacji",
-           "Ten folder zawiera grę, a nie aktualizację",
-           "Ta aktualizacja jest dla {}, a gra to {}: użyj aktualizacji z tego samego regionu",
-           "Ta aktualizacja to wersja {}, a port potrzebuje 1.11",
-           "Nie znaleziono aktualizacji: gra nie uruchomi się bez 1.11",
-           "Nie znaleziono aktualizacji 1.11.\n\nPort uruchamia tylko plik wykonywalny wersji 1.11: bez niej gra "
-           "zatrzymuje się podczas startu. Wybierz folder aktualizacji w oknie Foldery albo umieść go obok gry pod "
-           "nazwą {}-patch.",
-           "Folder aktualizacji nie nadaje się: {}.",
-           "Grać mimo to? (Nie otwiera okno Foldery.)"],
-    "ru": ["Своя папка обновления 1.11",
-           "В этой папке нет eboot.bin и sce_sys\\param.sfo (и нет папки uroot с ними)",
-           "Это папка самой игры: выберите папку обновления",
-           "В этой папке игра, а не обновление",
-           "Это обновление для {}, а игра — {}: используйте обновление того же региона",
-           "Это обновление версии {}, а порту нужна 1.11",
-           "Обновление не найдено: без 1.11 игра не запустится",
-           "Обновление 1.11 не найдено.\n\nПорт запускает только исполняемый файл версии 1.11: без него игра "
-           "останавливается при запуске. Выберите папку обновления в окне «Папки» или положите её рядом с игрой "
-           "под именем {}-patch.",
-           "Папка обновления не подходит: {}.",
-           "Всё равно играть? («Нет» открывает окно «Папки».)"],
-    "ja": ["1.11 アップデートのカスタムフォルダー",
-           "このフォルダーには eboot.bin と sce_sys\\param.sfo がありません (中の uroot フォルダーにもありません)",
-           "これはゲーム本体のフォルダーです。アップデートのフォルダーを選んでください",
-           "このフォルダーはアップデートではなくゲーム本体です",
-           "このアップデートは {} 用で、ゲームは {} です。同じ地域のアップデートを使ってください",
-           "このアップデートはバージョン {} です。移植版には 1.11 が必要です",
-           "アップデートが見つかりません。1.11 がないとゲームは起動しません",
-           "アップデート 1.11 が見つかりません。\n\n移植版はバージョン 1.11 の実行ファイルでしか動きません。"
-           "ないとゲームは起動中に止まります。「フォルダー」でアップデートのフォルダーを選ぶか、ゲームの隣に "
-           "{}-patch という名前で置いてください。",
-           "アップデートのフォルダーは使えません: {}。",
-           "このままプレイしますか? (「いいえ」でフォルダーのウィンドウを開きます。)"],
+# Under the game folder (Folders window): green when the game's executable is 1.11's or update 1.11 is
+# next to it (or chosen), red otherwise.
+GAME_UPDATE_KEYS = ("game_update_found", "game_update_missing")
+GAME_UPDATE_TEXT = {
+    "pt": ["Jogo com atualização v1.11 achada",
+           "O executável do jogo não tem a atualização v1.11, e nenhuma pasta com a atualização foi achada ao lado"],
+    "en": ["Game with update v1.11 found",
+           "The game's executable does not have update v1.11, and no folder with the update was found next to it"],
+    "es": ["Juego con actualización v1.11 encontrado",
+           "El ejecutable del juego no tiene la actualización v1.11, y no se encontró ninguna carpeta con la "
+           "actualización junto a él"],
+    "fr": ["Jeu avec mise à jour v1.11 trouvé",
+           "L'exécutable du jeu n'a pas la mise à jour v1.11, et aucun dossier contenant la mise à jour n'a été "
+           "trouvé à côté"],
+    "de": ["Spiel mit Update v1.11 gefunden",
+           "Die ausführbare Datei des Spiels hat nicht das Update v1.11, und daneben wurde kein Ordner mit dem "
+           "Update gefunden"],
+    "it": ["Gioco con aggiornamento v1.11 trovato",
+           "L'eseguibile del gioco non ha l'aggiornamento v1.11, e accanto non è stata trovata nessuna cartella "
+           "con l'aggiornamento"],
+    "pl": ["Znaleziono grę z aktualizacją v1.11",
+           "Plik wykonywalny gry nie ma aktualizacji v1.11, a obok nie znaleziono folderu z aktualizacją"],
+    "ru": ["Игра с обновлением v1.11 найдена",
+           "В исполняемом файле игры нет обновления v1.11, и рядом не найдено папки с обновлением"],
+    "ja": ["アップデート v1.11 付きのゲームが見つかりました",
+           "ゲームの実行ファイルにはアップデート v1.11 がなく、隣にアップデートのフォルダーも見つかりませんでした"],
 }
-for _code, _values in UPDATE_FOLDER_TEXT.items():
-    TEXTS[_code].update(zip(UPDATE_FOLDER_KEYS, _values))
+for _code, _values in GAME_UPDATE_TEXT.items():
+    TEXTS[_code].update(zip(GAME_UPDATE_KEYS, _values))
 
 
 def tool(name):
@@ -2273,19 +2187,22 @@ def found_update(game):
                  if (candidate / "eboot.bin").is_file() and (candidate / "sce_sys/param.sfo").is_file()), None)
 
 
-def update_problem(folders):
-    """A note on the update folder in use (the one chosen, else the one next to the game), as
-    (text key, values); None when it looks like update 1.11 or when there is none. Only a note in
-    the Folders window: the update is optional (it may be merged into the game folder already)."""
+def game_has_update(folders):
+    """True when the game folder's own eboot.bin is 1.11's (the update merged in), or when the update
+    folder next to it holds update 1.11 of this game."""
     game = game_folder(folders)
-    update = folders.get("update") or found_update(game)
-    if update is None:
-        return None
-    _, problem = check_update_folder(update, game)
-    return problem and ("update_chosen_bad", problem)
+    eboot = game / "eboot.bin"
+    if eboot.is_file():
+        try:
+            if not tool("probe_tlou").base_executable(eboot):
+                return True
+        except Exception:
+            pass
+    update = found_update(game)
+    return update is not None and check_update_folder(update, game)[1] is None
 
 BG, PANEL, TEXT, MUTED, ACCENT, ACCENT_HOT = "#090909", "#141414", "#ece9e2", "#8f8f88", "#c8862a", "#e4a23f"
-DISABLED, ERROR = "#2b2b2b", "#e06c5a"
+DISABLED, ERROR, OK = "#2b2b2b", "#e06c5a", "#6cc070"
 
 
 def read_ini(path=None):
@@ -2565,8 +2482,6 @@ def game_env(switches, base=None, overrides=None, folders=None):
     env["GOW3_GUEST_PRIORITY"] = overrides.get("GOW3_GUEST_PRIORITY", "1")
     if folders and folders.get("cache"):
         env["GOW3_GPU_CACHE_DIR"] = folders["cache"]
-    if folders and folders.get("update"):
-        env["TLOU_UPDATE"] = folders["update"]   # tools/probe_tlou.py find_update
     env["TLOU_JOB_SLEEP"] = "1" if switches["job_sleep"] else "0"
     env["TLOU_PRO_SHADOWS"] = "1" if switches["pro_shadows"] else "0"
     env["TLOU_AMBIENT_SHADOWS"] = "half" if switches.get("ambient_half", True) else "quarter"
@@ -3516,11 +3431,6 @@ class Launcher(tk.Tk):
             self.process = subprocess.Popen(
                 game_command(python_exe(), self.folders, self.seconds), cwd=ROOT, env=env,
                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, **kwargs)
-
-    def problem_text(self, problem):
-        """The text of a (text key, values) problem; a value may itself be one."""
-        key, *values = problem
-        return self.t(key).format(*(self.problem_text(v) if isinstance(v, tuple) else v for v in values))
 
     def note(self):
         key, *values = self.update_note
@@ -4484,53 +4394,42 @@ class Launcher(tk.Tk):
         area.grid(row=row, column=0, sticky="ew", padx=16, pady=(12, 4))
         area.columnconfigure(0, weight=1)
         tk.Label(area, text=text and self.t(text), bg=BG, fg=ACCENT, font=("Segoe UI Semibold", 9)).grid(row=0, column=0, sticky="w")
-        def default_path():
-            if key != "update":
-                return str(default)
-            found = found_update(game_folder(self.folders))   # the one probe_tlou.py would find, else none
-            return str(found) if found else ""
-
-        shown = tk.StringVar(value=self.folders.get(key) or default_path())
+        shown = tk.StringVar(value=self.folders.get(key) or str(default))
         tk.Entry(area, textvariable=shown, state="readonly", readonlybackground=PANEL, fg=TEXT, bd=0, width=70,
                  font=("Segoe UI", 10)).grid(row=1, column=0, sticky="ew", ipady=4)
         error = tk.Label(area, bg=BG, fg=ERROR, font=("Segoe UI", 9), justify="left", wraplength=560)
         error.grid(row=2, column=0, sticky="w")
 
-        def update_state():
-            """The update row: its folder, and a note (never a block) when it does not look like 1.11."""
-            shown.set(self.folders.get("update") or default_path())
-            problem = update_problem(self.folders)
-            error.config(text=problem and self.problem_text(problem) or "", fg=MUTED)
-
         def change(value):
             if key == "game" and value and not (Path(value) / "eboot.bin").is_file():
                 error.config(text=self.t("no_eboot"), fg=ERROR)
                 return
-            if key == "update" and value:
-                root, problem = check_update_folder(value, game_folder(self.folders))
-                if problem and problem[0] in ("update_no_files", "update_is_game"):
-                    error.config(text=self.problem_text(problem), fg=ERROR)   # nothing probe_tlou.py could use
-                    return
-                if root is None:   # the other checks (category, title id, version) only note, see update_state
-                    root = next(c for c in (Path(value) / "uroot", Path(value)) if (c / "eboot.bin").is_file())
-                value = str(root)   # its uroot when the folder chosen holds one
             error.config(text="", fg=ERROR)
             if value:
                 self.folders[key] = value
             else:
                 self.folders.pop(key, None)
-            shown.set(value or default_path())
+            shown.set(value or str(default))
             self.save()
             if key == "game":
                 self.art = load_art(self.WIDTH, self.HEIGHT, game_folder(self.folders))
                 self.set_icon()
                 self.build()
-            if key in ("game", "update") and getattr(window, "update_state", None):
-                window.update_state()
+            if key == "game" and getattr(window, "game_status", None):
+                window.game_status()
 
-        if key == "update":
-            window.update_state = update_state
-            update_state()
+        if key == "game":
+            status = tk.Label(area, font=("Segoe UI Semibold", 9), bg=BG, justify="left", wraplength=560)
+            status.grid(row=3, column=0, columnspan=3, sticky="w", pady=(2, 0))
+
+            def game_status():
+                """Green when the game's executable is 1.11's or update 1.11 sits next to it, else red."""
+                found = game_has_update(self.folders)
+                status.config(text=self.t("game_update_found" if found else "game_update_missing"),
+                              fg=OK if found else ERROR)
+
+            window.game_status = game_status
+            game_status()
 
         def browse():
             chosen = filedialog.askdirectory(parent=window, initialdir=shown.get())
