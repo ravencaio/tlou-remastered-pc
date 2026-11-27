@@ -49,12 +49,44 @@ static const struct { const char *leave_game, *texts[TEXT_COUNT]; } languages[] 
 };
 enum { LANGUAGE_COUNT = sizeof(languages) / sizeof(languages[0]) };
 
+/* The post-processing section (26 Nov 2026, src/runtime_post_effects.h): its header and the
+ * effects' names, in the order of languages[] (characters checked the same way; the Japanese has
+ * no 被 or 筋, the Korean no 룸, the Chinese no 斑, 糊 or 耀, the Russian no Ъ). */
+enum { POST_TEXT_TITLE, POST_TEXT_FIRST, POST_TEXT_COUNT = POST_TEXT_FIRST + 8 };
+static const char *const post_texts[][POST_TEXT_COUNT] = {
+    {"POST-PROCESSING", "MOTION BLUR", "DEPTH OF FIELD", "BLOOM", "LENS FLARE", "LIGHT SHAFTS", "VIGNETTE", "FILM GRAIN", "COLOR GRADING"},
+    {"POST-TRAITEMENT", "FLOU DE MOUVEMENT", "PROFONDEUR DE CHAMP", "BLOOM", "REFLETS D'OBJECTIF", "RAYONS DE LUMIÈRE", "VIGNETTAGE", "GRAIN DE PELLICULE", "ÉTALONNAGE DES COULEURS"},
+    {"POST-ELABORAZIONE", "SFOCATURA DI MOVIMENTO", "PROFONDITÀ DI CAMPO", "BLOOM", "RIFLESSI DELL'OBIETTIVO", "RAGGI DI LUCE", "VIGNETTATURA", "GRANA DELLA PELLICOLA", "CORREZIONE COLORE"},
+    {"NACHBEARBEITUNG", "BEWEGUNGSUNSCHÄRFE", "TIEFENSCHÄRFE", "BLOOM", "LINSENREFLEXE", "LICHTSTRAHLEN", "VIGNETTIERUNG", "FILMKORN", "FARBKORREKTUR"},
+    {"POSPROCESADO", "DESENFOQUE DE MOVIMIENTO", "PROFUNDIDAD DE CAMPO", "RESPLANDOR", "DESTELLOS DE LENTE", "RAYOS DE LUZ", "VIÑETA", "GRANO DE PELÍCULA", "CORRECCIÓN DE COLOR"},
+    {"POST-PROCESSING", "MOTION BLUR", "DEPTH OF FIELD", "BLOOM", "LENS FLARE", "LIGHT SHAFTS", "VIGNETTE", "FILM GRAIN", "COLOUR GRADING"},
+    {"EFTERBEHANDLING", "BEVÆGELSESSLØRING", "DYBDESKARPHED", "BLOOM", "LINSEREFLEKSER", "LYSSTRÅLER", "VIGNETTERING", "FILMKORN", "FARVEKORRIGERING"},
+    {"PÓS-PROCESSAMENTO", "DESFOCAGEM DE MOVIMENTO", "PROFUNDIDADE DE CAMPO", "BLOOM", "REFLEXOS DA LENTE", "FEIXES DE LUZ", "VINHETA", "GRÃO DE PELÍCULA", "CORREÇÃO DE COR"},
+    {"NABEWERKING", "BEWEGINGSONSCHERPTE", "SCHERPTEDIEPTE", "BLOOM", "LENSFLARES", "LICHTSTRALEN", "VIGNETTERING", "FILMKORREL", "KLEURCORRECTIE"},
+    {"ポストプロセス", "モーションブラー", "デプス・オブ・フィールド", "ブルーム", "レンズフレア", "ライトシャフト", "ビネット", "フィルムグレイン", "カラーグレーディング"},
+    {"후처리", "모션 블러", "피사계 심도", "빛 번짐", "렌즈 플레어", "빛줄기", "비네트", "필름 그레인", "색 보정"},
+    {"JÄLKIKÄSITTELY", "LIIKESUMENNUS", "SYVÄTERÄVYYS", "HEHKU", "LINSSIHEIJASTUKSET", "VALOKEILAT", "VINJETOINTI", "FILMIRAKEISUUS", "VÄRIKORJAUS"},
+    {"ETTERBEHANDLING", "BEVEGELSESUSKARPHET", "DYBDESKARPHET", "BLOOM", "LINSEREFLEKSER", "LYSSTRÅLER", "VIGNETTERING", "FILMKORN", "FARGEKORRIGERING"},
+    {"EFTERBEHANDLING", "RÖRELSEOSKÄRPA", "SKÄRPEDJUP", "BLOOM", "LINSREFLEXER", "LJUSSTRÅLAR", "VINJETTERING", "FILMKORN", "FÄRGKORRIGERING"},
+    {"後製處理", "動態殘影", "景深", "光暈", "鏡頭閃光", "光束", "暈影", "底片顆粒", "色彩調整"},
+    {"ПОСТОБРАБОТКА", "РАЗМЫТИЕ В ДВИЖЕНИИ", "ГЛУБИНА РЕЗКОСТИ", "СВЕЧЕНИЕ", "БЛИКИ ЛИНЗЫ", "СВЕТОВЫЕ ЛУЧИ", "ВИНЬЕТКА", "ЗЕРНИСТОСТЬ ПЛЕНКИ", "ЦВЕТОКОРРЕКЦИЯ"},
+    {"POSTPROCESSING", "ROZMYCIE RUCHU", "GŁĘBIA OSTROŚCI", "POŚWIATA", "ODBLASKI OBIEKTYWU", "SNOPY ŚWIATŁA", "WINIETA", "ZIARNO FILMOWE", "KOREKCJA KOLORÓW"},
+    {"POSPROCESAMIENTO", "DESENFOQUE DE MOVIMIENTO", "PROFUNDIDAD DE CAMPO", "RESPLANDOR", "DESTELLOS DE LENTE", "RAYOS DE LUZ", "VIÑETA", "GRANO DE PELÍCULA", "CORRECCIÓN DE COLOR"},
+    {"PÓS-PROCESSAMENTO", "DESFOQUE DE MOVIMENTO", "PROFUNDIDADE DE CAMPO", "BLOOM", "REFLEXO DE LENTE", "FEIXES DE LUZ", "VINHETA", "GRANULAÇÃO DE FILME", "CORREÇÃO DE COR"},
+    {"ΜΕΤΑΕΠΕΞΕΡΓΑΣΙΑ", "ΘΟΛΩΣΗ ΚΙΝΗΣΗΣ", "ΒΑΘΟΣ ΠΕΔΙΟΥ", "ΛΑΜΨΗ", "ΑΝΤΑΝΑΚΛΑΣΕΙΣ ΦΑΚΟΥ", "ΑΚΤΙΝΕΣ ΦΩΤΟΣ", "ΒΙΝΙΕΤΑ", "ΚΟΚΚΟΣ ΦΙΛΜ", "ΔΙΟΡΘΩΣΗ ΧΡΩΜΑΤΩΝ"},
+    {"POSTPROCESING", "ROZMAZÁNÍ POHYBEM", "HLOUBKA OSTROSTI", "ZÁŘE", "ODLESKY OBJEKTIVU", "SVĚTELNÉ PAPRSKY", "VINĚTACE", "FILMOVÉ ZRNO", "KOREKCE BAREV"},
+    {"SON İŞLEME", "HAREKET BULANIKLIĞI", "ALAN DERİNLİĞİ", "PARLAMA", "MERCEK PARLAMASI", "IŞIK HÜZMELERİ", "VİNYET", "FİLM GRENİ", "RENK DÜZENLEME"},
+};
+_Static_assert(sizeof(post_texts) / sizeof(post_texts[0]) == LANGUAGE_COUNT, "a post-processing text per language");
+
+/* A row's name from post_texts. */
+#define POST_NAME 0x100
 /* Sliders: the setting in percent, from min to max in steps of step. */
 typedef struct {
     Gow3PcRowKind kind;
     int setting; /* GOW3_PC_* (gow3gpu.h), MORE_SETTINGS, or unused */
     uint32_t game_text; /* a header's label */
-    int text; /* TEXT_*: the row's name */
+    int text; /* TEXT_*: the row's name; POST_NAME + n: post_texts[][n] */
     int min, max, step;
 } RowDef;
 static const RowDef defs[] = {
@@ -66,6 +98,15 @@ static const RowDef defs[] = {
     {GOW3_PC_ROW_LIST, GOW3_PC_ANISOTROPIC_FILTER, 0, TEXT_ANISOTROPIC, 0, 0, 0},
     {GOW3_PC_ROW_SLIDER, GOW3_PC_SHARPENING, 0, TEXT_SHARPENING, 0, 100, 5},
     {GOW3_PC_ROW_TOGGLE, GOW3_PC_PERF_OVERLAY, 0, TEXT_PERF_OVERLAY, 0, 0, 0},
+    {GOW3_PC_ROW_HEADER, 0, 0, POST_NAME + POST_TEXT_TITLE, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 0, 0, POST_NAME + POST_TEXT_FIRST + 0, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 1, 0, POST_NAME + POST_TEXT_FIRST + 1, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 2, 0, POST_NAME + POST_TEXT_FIRST + 2, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 3, 0, POST_NAME + POST_TEXT_FIRST + 3, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 4, 0, POST_NAME + POST_TEXT_FIRST + 4, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 5, 0, POST_NAME + POST_TEXT_FIRST + 5, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 6, 0, POST_NAME + POST_TEXT_FIRST + 6, 0, 0, 0},
+    {GOW3_PC_ROW_TOGGLE, GOW3_PC_POST_FIRST + 7, 0, POST_NAME + POST_TEXT_FIRST + 7, 0, 0, 0},
     {GOW3_PC_ROW_HEADER, 0, TEXT_MENU_CONTROLS, TEXT_NONE, 0, 0, 0},
     {GOW3_PC_ROW_SLIDER, GOW3_PC_MOUSE_SENS, 0, TEXT_MOUSE_SENS, 10, 500, 10},
     {GOW3_PC_ROW_SLIDER, GOW3_PC_MOUSE_AIM_SENS, 0, TEXT_MOUSE_AIM_SENS, 10, 500, 10},
@@ -98,7 +139,8 @@ const Gow3PcRow *runtime_menu_pc_rows(unsigned *count) {
     if (env && env[0] == '0') return NULL;
     for (unsigned i = 0; i < ROW_COUNT; ++i)
         rows[i] = (Gow3PcRow){defs[i].kind,
-                              defs[i].kind == GOW3_PC_ROW_HEADER ? defs[i].game_text : GOW3_MENU_PC_ROW_LABEL + i,
+                              defs[i].kind == GOW3_PC_ROW_HEADER && defs[i].game_text ? defs[i].game_text
+                                                                                       : GOW3_MENU_PC_ROW_LABEL + i,
                               GOW3_MENU_PC_OPTION + i};
     *count = ROW_COUNT;
     return rows;
@@ -134,6 +176,7 @@ const char *runtime_menu_pc_text(Gow3TextLookup lookup, void *table, uint32_t si
     if (sid < GOW3_MENU_PC_ROW_LABEL || sid >= GOW3_MENU_PC_ROW_LABEL + ROW_COUNT) return NULL;
     const RowDef *def = &defs[sid - GOW3_MENU_PC_ROW_LABEL];
     if (def->text == TEXT_NONE) return NULL;
+    if (def->text >= POST_NAME) return post_texts[language][def->text - POST_NAME];
     return languages[language].texts[def->text];
 }
 
@@ -268,4 +311,72 @@ const char *runtime_menu_pc_game_text(uint32_t sid) {
 
 const char *runtime_menu_pc_new_save_text(void) {
     return languages[atomic_load(&last_language)].texts[TEXT_NEW_SAVE];
+}
+
+/* --- Scrolling (runtime_menu_pc.h) ----------------------------------------------------------- */
+float runtime_menu_pc_scroll_for(const float *heights, unsigned count, int focused, float scroll, unsigned char *visible) {
+    float total = 0;
+    for (unsigned i = 0; i < count; ++i) total += heights[i];
+    const float view = (float)RUNTIME_MENU_PC_VIEW;
+    if (focused >= 0 && (unsigned)focused < count) {
+        float top = 0;
+        for (int i = 0; i < focused; ++i) top += heights[i];
+        const float bottom = top + heights[focused];
+        /* Going up: the section's header (and a spacer) above the row shows with it. */
+        float shown_top = top;
+        for (int i = focused - 1; count == ROW_COUNT && i >= 0 && i >= focused - 2; --i) {
+            if (defs[i].kind != GOW3_PC_ROW_HEADER && defs[i].kind != GOW3_PC_ROW_SPACER) break;
+            shown_top -= heights[i];
+        }
+        if (shown_top < scroll) scroll = shown_top;
+        if (bottom > scroll + view) scroll = bottom - view;
+    }
+    if (scroll > total - view) scroll = total - view;
+    if (scroll < 0) scroll = 0;
+    float y = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        visible[i] = y >= scroll - 0.5f && y + heights[i] <= scroll + view + 0.5f;
+        y += heights[i];
+    }
+    return scroll;
+}
+
+ABI uint32_t runtime_menu_pc_scroll(unsigned char *page, uint32_t y_bits) {
+    enum { PAGE_HASH = 0x10, PAGE_ROW_COUNT = 0xac, PAGE_ROWS = 0xb0, ROW_FOCUSED = 0x8, ROW_POSITION = 0xa0,
+           ROW_RECT = 0x90, MAX = 64 };
+    static float scroll;
+    static unsigned char *scrolled_page;
+    if (!page || gow3_menu_u32(page + PAGE_HASH) != GOW3_MENU_PC_PAGE) return y_bits;
+    const int32_t count = (int32_t)gow3_menu_u32(page + PAGE_ROW_COUNT);
+    const unsigned char *list = (const unsigned char *)(uintptr_t)gow3_menu_u64(page + PAGE_ROWS);
+    if (count <= 0 || count > MAX || !list) return y_bits;
+    if (page != scrolled_page) { /* opened again: from the top */
+        scrolled_page = page;
+        scroll = 0;
+    }
+    float heights[MAX];
+    unsigned char visible[MAX];
+    unsigned char *row_at[MAX];
+    int focused = -1;
+    for (int i = 0; i < count; ++i) {
+        row_at[i] = (unsigned char *)(uintptr_t)gow3_menu_u64(list + 8 * (unsigned)i);
+        if (!row_at[i]) return y_bits;
+        memcpy(&heights[i], row_at[i] + ROW_RECT + 12, 4);
+        if (!(heights[i] > 0 && heights[i] < 200)) heights[i] = 0;
+        if (gow3_menu_u32(row_at[i] + ROW_FOCUSED) == 1) focused = i;
+    }
+    scroll = runtime_menu_pc_scroll_for(heights, (unsigned)count, focused, scroll, visible);
+    for (int i = 0; i < count; ++i) {
+        unsigned char *position = (unsigned char *)(uintptr_t)gow3_menu_u64(row_at[i] + ROW_POSITION);
+        if (visible[i] || !position) continue;
+        float x;
+        memcpy(&x, position, 4);
+        x += 10000.0f; /* off the screen; the layout sets the position again every frame */
+        memcpy(position, &x, 4);
+    }
+    float y;
+    memcpy(&y, &y_bits, 4);
+    y -= scroll;
+    memcpy(&y_bits, &y, 4);
+    return y_bits;
 }

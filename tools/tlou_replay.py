@@ -54,7 +54,6 @@ def launcher_env():
     env = dict(overrides)
     env.setdefault("GOW3_NATIVE_TSC", "1")
     env.setdefault("GOW3_GUEST_PRIORITY", "1")
-    env["GOW3_NO_MOTION_BLUR"] = "0" if switches["motion_blur"] else "1"
     env["TLOU_JOB_SLEEP"] = "1" if switches["job_sleep"] else "0"
     env["TLOU_PRO_SHADOWS"] = "1" if switches["pro_shadows"] else "0"
     if switches["background_shaders"]:
@@ -97,9 +96,14 @@ def main():
                         help="save the frame at these seconds of the replay (start:end:step)")
     parser.add_argument("--snapshot", action="store_true",
                         help="copy the player's saves into the pristine test profile and exit")
+    parser.add_argument("--pristine", default="",
+                        help="another pristine profile folder under analysis/ (default tlou-test-replay-pristine)")
     parser.add_argument("vars", nargs="*", help="NAME=value for the game's environment")
     args = parser.parse_args()
 
+    global PRISTINE
+    if args.pristine:
+        PRISTINE = ROOT / "analysis" / args.pristine
     if args.snapshot or not PRISTINE.exists():
         snapshot()
         if args.snapshot:

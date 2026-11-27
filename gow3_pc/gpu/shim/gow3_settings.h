@@ -79,6 +79,10 @@ struct Values {
     /// 25 Nov 2026: anisotropic filtering forced on the game's mipmapped textures (2, 4, 8 or
     /// 16x); 0 keeps the game's own samplers. Live: new samplers from the next frame.
     std::atomic<int> anisotropic_filter{0};
+    /// 26 Nov 2026: the game's post-processing effects switched off (The Last of Us; bits in
+    /// PostEffectNames order, src/runtime_post_effects.h). Live. Motion blur off by default, as
+    /// before (GOW3_NO_MOTION_BLUR); gow3.ini post_effects_off lists the names.
+    std::atomic<unsigned> post_effects_off{1u};
     // Startup: run.py turns them into patches and environment variables; "Apply and restart".
     std::atomic<int> render_resolution{0};
     std::atomic<int> engine_fps{120};
@@ -195,6 +199,14 @@ using KeyValues = std::vector<std::pair<std::string, std::string>>;
 /// The current settings as file lines.
 KeyValues Current();
 void Save();
+
+/// The post_effects_off names, bit 0 first.
+inline constexpr const char* PostEffectNames[] = {"motion_blur", "depth_of_field", "bloom", "lens_flare",
+                                                  "light_shafts", "vignette", "film_grain", "color_grading"};
+inline constexpr int PostEffectCount = 8;
+/// "bloom,vignette" -> mask (unknown names ignored); "none" or empty -> 0.
+unsigned ParsePostEffects(const std::string& value);
+std::string PostEffectsText(unsigned mask);
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

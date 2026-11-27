@@ -104,6 +104,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.vibration = i != 0;
         return;
     }
+    if (key == "post_effects_off") {
+        v.post_effects_off = ParsePostEffects(value);
+        return;
+    }
     if (key == "walk_speed") {
         v.walk_speed = f > 0.0f ? Clamp(f, 0.1f, 1.0f) : 0.75f;
         return;
@@ -314,12 +318,16 @@ void Load() {
         {"GOW3_PUSH_STEER_CLASSIC", "push_steer_classic"},
         {"GOW3_PROMPTS", "prompts"},                  {"GOW3_STICK_SPEED", "stick_speed"},
         {"GOW3_WALK_TOGGLE", "walk_toggle"},          {"GOW3_WALK_SPEED", "walk_speed"},
-        {"GOW3_VIBRATION", "vibration"},
+        {"GOW3_VIBRATION", "vibration"},              {"GOW3_POST_EFFECTS_OFF", "post_effects_off"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env); value && value[0]) {
             Set(v, key, value);
         }
+    }
+    // The older motion blur switch (scripts, tools/tlou_replay.py): 1 off, 0 on.
+    if (const char* env = std::getenv("GOW3_NO_MOTION_BLUR"); env && (env[0] == '0' || env[0] == '1')) {
+        v.post_effects_off = env[0] == '1' ? v.post_effects_off | 1u : v.post_effects_off & ~1u;
     }
     v.startup_preset = v.preset;
     v.startup_upscaler = v.upscaler;
@@ -443,6 +451,34 @@ KeyValues ReadFile() {
 
 } // namespace
 
+unsigned ParsePostEffects(const std::string& value) {
+    unsigned mask = 0;
+    size_t start = 0;
+    while (start <= value.size()) {
+        size_t end = value.find(',', start);
+        if (end == std::string::npos) end = value.size();
+        std::string name = value.substr(start, end - start);
+        name.erase(0, name.find_first_not_of(" \t"));
+        name.erase(name.find_last_not_of(" \t\r") + 1);
+        for (int i = 0; i < PostEffectCount; ++i) {
+            if (name == PostEffectNames[i]) mask |= 1u << i;
+        }
+        start = end + 1;
+    }
+    return mask;
+}
+
+std::string PostEffectsText(unsigned mask) {
+    std::string text;
+    for (int i = 0; i < PostEffectCount; ++i) {
+        if (mask >> i & 1) {
+            if (!text.empty()) text += ',';
+            text += PostEffectNames[i];
+        }
+    }
+    return text.empty() ? "none" : text;
+}
+
 KeyValues Current() {
     const auto& v = Get();
     std::string text;
@@ -494,6 +530,7 @@ KeyValues Current() {
            v.mouse_aim_sens.load(), v.mouse_vertical.load(), int(v.mouse_invert_x.load()), v.mouse_scope_sens.load(),
            int(v.mouse_scope_on.load()));
     Append(text, "push_steer_classic=%d\n", int(v.push_steer_classic.load()));
+    Append(text, "post_effects_off=%s\n", PostEffectsText(v.post_effects_off).c_str());
     Append(text, "walk_toggle=%d\nwalk_speed=%.2f\nvibration=%d\n", int(v.walk_toggle.load()), v.walk_speed.load(),
            int(v.vibration.load()));
     {
@@ -687,7 +724,10 @@ extern "C" int gow3gpu_pc_setting(int setting) {
         const int level = s.anisotropic_filter;
         return level >= 16 ? 4 : level >= 8 ? 3 : level >= 4 ? 2 : level >= 2 ? 1 : 0;
     }
-    default: return 0;
+    default:
+        if (setting >= GOW3_PC_POST_FIRST && setting <= GOW3_PC_POST_LAST)
+            return (s.post_effects_off >> (setting - GOW3_PC_POST_FIRST) & 1u) ? 0 : 1;
+        return 0;
     }
 }
 
@@ -757,9 +797,20 @@ extern "C" void gow3gpu_pc_setting_set(int setting, int value) {
     case GOW3_PC_MOUSE_INVERT: s.mouse_invert = value != 0; controls = true; break;
     case GOW3_PC_VIBRATION: s.vibration = value != 0; controls = true; break;
     case GOW3_PC_ANISOTROPIC_FILTER: s.anisotropic_filter = std::clamp(value, 0, 4) ? 1 << std::clamp(value, 1, 4) : 0; break;
-    default: return;
+    default:
+        if (setting < GOW3_PC_POST_FIRST || setting > GOW3_PC_POST_LAST) return;
+        {
+            const unsigned bit = 1u << (setting - GOW3_PC_POST_FIRST);
+            if (value) s.post_effects_off &= ~bit;
+            else s.post_effects_off |= bit;
+        }
+        break;
     }
     if (controls) Gow3Settings::ControlsChanged();
+}
+
+extern "C" unsigned gow3gpu_post_effects_off(void) {
+    return Gow3Settings::Get().post_effects_off.load(std::memory_order_relaxed);
 }
 
 extern "C" void gow3gpu_pc_settings_save(void) {

@@ -20,6 +20,7 @@
 #include "runtime_mouselook.h"
 #include "runtime_gamesettings.h"
 #include "runtime_render_settings.h"
+#include "runtime_post_effects.h"
 #include "gpu/gow3gpu.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error This prototype requires x86-64 GCC or Clang (including MinGW).
@@ -1124,7 +1125,8 @@ static const RenderSettingsSite render_settings_sites[] = {
     {0xbc7131, 7, {0x4c, 0x89, 0xe8, 0x48, 0x83, 0xc4, 0x18, 0x5b, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f},
      {0x4c, 0x89, 0xef, 0x90}},       /* mov rdi, r13 */
 };
-static unsigned build_render_settings_stub(unsigned char *p, const RenderSettingsSite *site, uintptr_t resume) {
+static unsigned build_render_settings_stub(unsigned char *p, const RenderSettingsSite *site, uintptr_t resume,
+                                           uint64_t handler) {
     static const unsigned char save[] = {
         0x48, 0x8d, 0x64, 0x24, 0x80,                   /* lea rsp, [rsp - 128]: the red zone */
         0x9c, 0x50, 0x51, 0x52, 0x56, 0x57,             /* pushfq; push rax, rcx, rdx, rsi, rdi */
@@ -1145,7 +1147,6 @@ static unsigned build_render_settings_stub(unsigned char *p, const RenderSetting
         if (!store) {
             memcpy(p + n, site->argument, sizeof(site->argument)); n += sizeof(site->argument);
             p[n++] = 0x48; p[n++] = 0xb8;               /* mov rax, handler */
-            const uint64_t handler = (uint64_t)(uintptr_t)runtime_render_settings_module;
             memcpy(p + n, &handler, 8); n += 8;
             p[n++] = 0xff; p[n++] = 0xd0;               /* call rax */
         }
@@ -1197,7 +1198,8 @@ static void install_render_settings(Segment *segments, uint64_t count, uint64_t 
     for (unsigned i = 0; i < SITES; ++i)
         if (!shared[i])
             build_render_settings_stub(stubs + i * STUB, &render_settings_sites[i],
-                                       (uintptr_t)(image + render_settings_sites[i].offset + render_settings_sites[i].length));
+                                       (uintptr_t)(image + render_settings_sites[i].offset + render_settings_sites[i].length),
+                                       (uint64_t)(uintptr_t)runtime_render_settings_module);
     protect(stubs, page_size, 5);
     for (unsigned i = 0; i < SITES; ++i) {
         const RenderSettingsSite *site = &render_settings_sites[i];
@@ -1206,6 +1208,113 @@ static void install_render_settings(Segment *segments, uint64_t count, uint64_t 
     }
     printf("Render settings: %u overrides from %s (hooks in the DC module loader%s)\n", overrides, path,
            shared[0] ? ", one shared with the menu hooks" : "");
+}
+/* Post-processing switches (src/runtime_post_effects.h): a jump at the exit of the game's
+ * animator update (0xBCCC30, the manager at 0x1A7F8A0 that animates the render settings in use
+ * toward the area's), where every path passes `mov byte [r10 + 0x6590], 0` (8 bytes, no branch
+ * into its middle), to the same kind of stub as the render settings overrides'. */
+static const RenderSettingsSite post_effects_site = {
+    0xbcd17d, 8, {0x41, 0xc6, 0x82, 0x90, 0x65, 0x00, 0x00, 0x00, 0x48, 0x81, 0xc4, 0x28, 0x01, 0x00, 0x00, 0x5b},
+    {0x90, 0x90, 0x90, 0x90}};
+static void install_post_effects(Segment *segments, uint64_t count, uint64_t size) {
+    const RenderSettingsSite *site = &post_effects_site;
+    /* The slots' base in the updater's caller chain is checked too: lea r13, [rip -> 0x1A85E50]
+     * in the code that fills them (0xBCE963). */
+    static const unsigned char slots_lea[] = {0x4c, 0x8d, 0x2d, 0xe6, 0x74, 0xeb, 0x00};
+    if (site->offset + sizeof(site->expected) > size || !mapped(segments, count, site->offset, sizeof(site->expected)) ||
+        memcmp(image + site->offset, site->expected, sizeof(site->expected)) ||
+        !mapped(segments, count, 0xbce963, sizeof(slots_lea)) || memcmp(image + 0xbce963, slots_lea, sizeof(slots_lea))) {
+        puts("Post effects: switches unavailable (not The Last of Us Remastered 1.11)");
+        return;
+    }
+    unsigned char *stub = allocate_near_image(size);
+    if (!stub) {
+        puts("Post effects: switches unavailable (no stub page in range)");
+        return;
+    }
+    build_render_settings_stub(stub, site, (uintptr_t)(image + site->offset + site->length),
+                               (uint64_t)(uintptr_t)runtime_post_effects_frame);
+    protect(stub, page_size, 5);
+    runtime_post_effects_set_image(image);
+    if (!install_jump(site->offset, site->length, stub)) {
+        runtime_post_effects_set_image(NULL);
+        puts("Post effects: switches unavailable (stub out of range)");
+        return;
+    }
+    puts("Post effects: switches ready (hook at the render settings animator update)");
+}
+/* The PC SETTINGS page scrolls (src/runtime_menu_pc.h): at 0x2F8026 the page layout (0x2F7390,
+ * every page, every frame) has the page in r8 and the list's origin y in r13d; its first
+ * instruction (`mov r15, [rbp - 0x3a0]`, 7 bytes, a jump target, nothing jumps into it) becomes a
+ * jump to a stub that keeps the registers as the render settings' stubs do, calls
+ * runtime_menu_pc_scroll(page, y) and puts the y it returns in r13d. */
+static int menu_scroll_wanted(void) {
+    const char *exit_hooks = getenv("GOW3_MENU_EXIT"), *page = getenv("GOW3_PC_MENU");
+    return !(exit_hooks && exit_hooks[0] == '0') && !(page && page[0] == '0');
+}
+static void install_menu_scroll(Segment *segments, uint64_t count, uint64_t size) {
+    static const unsigned char expected[] = {0x4c, 0x8b, 0xbd, 0x60, 0xfc, 0xff, 0xff,  /* mov r15, [rbp-0x3a0] */
+                                             0xc4, 0xc1, 0x79, 0x6e, 0xcc,              /* vmovd xmm1, r12d */
+                                             0xc4, 0xc1, 0x79, 0x6e};                   /* vmovd xmm2, r13d */
+    enum { AT = 0x2f8026, LENGTH = 7 };
+    if (AT + sizeof(expected) > size || !mapped(segments, count, AT, sizeof(expected)) ||
+        memcmp(image + AT, expected, sizeof(expected))) {
+        puts("Menu: PC SETTINGS scrolling unavailable (not update 1.11's page layout)");
+        return;
+    }
+    unsigned char *p = allocate_near_image(size);
+    if (!p) {
+        puts("Menu: PC SETTINGS scrolling unavailable (no stub page in range)");
+        return;
+    }
+    static const unsigned char save[] = {
+        0x48, 0x8d, 0x64, 0x24, 0x80,                   /* lea rsp, [rsp - 128]: the red zone */
+        0x9c, 0x50, 0x51, 0x52, 0x56, 0x57,             /* pushfq; push rax, rcx, rdx, rsi, rdi */
+        0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53, /* push r8-r11 */
+        0x53, 0x48, 0x89, 0xe3,                         /* push rbx; mov rbx, rsp */
+        0x48, 0x83, 0xe4, 0xf0,                         /* and rsp, -16 */
+        0x48, 0x81, 0xec, 0x00, 0x01, 0x00, 0x00,       /* sub rsp, 256 */
+    };
+    static const unsigned char restore[] = {
+        0x48, 0x89, 0xdc, 0x5b,                         /* mov rsp, rbx; pop rbx */
+        0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58, /* pop r11-r8 */
+        0x5f, 0x5e, 0x5a, 0x59, 0x58, 0x9d,             /* pop rdi, rsi, rdx, rcx, rax; popfq */
+        0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, /* lea rsp, [rsp + 128] */
+    };
+    unsigned n = 0;
+    memcpy(p + n, save, sizeof(save)); n += sizeof(save);
+    for (int store = 1; store >= 0; --store) {
+        if (!store) {
+            static const unsigned char arguments[] = {0x4c, 0x89, 0xc7,   /* mov rdi, r8 */
+                                                      0x44, 0x89, 0xee};  /* mov esi, r13d */
+            memcpy(p + n, arguments, sizeof(arguments)); n += sizeof(arguments);
+            p[n++] = 0x48; p[n++] = 0xb8;               /* mov rax, handler */
+            const uint64_t handler = (uint64_t)(uintptr_t)runtime_menu_pc_scroll;
+            memcpy(p + n, &handler, 8); n += 8;
+            p[n++] = 0xff; p[n++] = 0xd0;               /* call rax */
+            p[n++] = 0x41; p[n++] = 0x89; p[n++] = 0xc5; /* mov r13d, eax */
+        }
+        for (unsigned i = 0; i < 16; ++i) {             /* movdqu [rsp + 16i], xmm_i (or back) */
+            p[n++] = 0xf3;
+            if (i >= 8) p[n++] = 0x44;
+            p[n++] = 0x0f; p[n++] = store ? 0x7f : 0x6f;
+            p[n++] = (unsigned char)(0x84 | ((i & 7) << 3)); p[n++] = 0x24;
+            const uint32_t displacement = 16 * i;
+            memcpy(p + n, &displacement, 4); n += 4;
+        }
+    }
+    memcpy(p + n, restore, sizeof(restore)); n += sizeof(restore);
+    memcpy(p + n, expected, LENGTH); n += LENGTH;
+    static const unsigned char jump[] = {0xff, 0x25, 0x00, 0x00, 0x00, 0x00}; /* jmp [rip+0] */
+    memcpy(p + n, jump, sizeof(jump)); n += sizeof(jump);
+    const uint64_t resume = (uint64_t)(uintptr_t)(image + AT + LENGTH);
+    memcpy(p + n, &resume, 8);
+    protect(p, page_size, 5);
+    if (!install_jump(AT, LENGTH, p)) {
+        puts("Menu: PC SETTINGS scrolling unavailable (stub out of range)");
+        return;
+    }
+    puts("Menu: PC SETTINGS scrolls (hook in the page layout at 0x2f8026)");
 }
 /* QUIT in the lobby and the pause menu (src/menu_exit_hook.h): the menu data gets the button as it
  * loads, and the dispatcher tells the runtime when it is pressed. GOW3_MENU_EXIT=0 installs none of the menu
@@ -1721,7 +1830,9 @@ int main(int argc, char **argv) {
     if (gpu_enabled) install_mouse_look(segments, ns, size);
     if (gpu_enabled) install_stick_boost(segments, ns, size);
     if (gpu_enabled) install_menu_exit(segments, ns, size);
+    if (gpu_enabled && menu_scroll_wanted()) install_menu_scroll(segments, ns, size);
     if (render_settings_file) install_render_settings(segments, ns, size, render_settings_file);
+    if (gpu_enabled) install_post_effects(segments, ns, size);
     runtime_gamesettings_set_image(image, size);
     if (gpu_enabled && game_hooks) {
         install_orb_multiplier(segments, ns, size);

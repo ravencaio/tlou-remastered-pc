@@ -117,8 +117,14 @@ int gow3gpu_settings_light_shadow_distance(void);
 enum {
     GOW3_PC_DISPLAY_MODE, GOW3_PC_VSYNC, GOW3_PC_FPS_LIMIT, GOW3_PC_ANTI_ALIASING, GOW3_PC_SHARPENING,
     GOW3_PC_PERF_OVERLAY, GOW3_PC_MOUSE_SENS, GOW3_PC_MOUSE_AIM_SENS, GOW3_PC_MOUSE_SCOPE_ON, GOW3_PC_MOUSE_SCOPE_SENS, GOW3_PC_MOUSE_VERTICAL,
-    GOW3_PC_MOUSE_INVERT, GOW3_PC_VIBRATION, GOW3_PC_ANISOTROPIC_FILTER, GOW3_PC_SETTING_COUNT
+    GOW3_PC_MOUSE_INVERT, GOW3_PC_VIBRATION, GOW3_PC_ANISOTROPIC_FILTER,
+    /* The post-processing effects (1 on, 0 off), in the order of the mask's bits
+     * (src/runtime_post_effects.h). */
+    GOW3_PC_POST_FIRST, GOW3_PC_POST_LAST = GOW3_PC_POST_FIRST + 7, GOW3_PC_SETTING_COUNT
 };
+/* The post-processing effects switched off, a mask of RUNTIME_POST_* bits (gow3.ini
+ * post_effects_off), read live every frame. */
+unsigned gow3gpu_post_effects_off(void);
 int gow3gpu_pc_setting(int setting);
 int gow3gpu_pc_setting_count(int setting);
 const char *gow3gpu_pc_setting_choice(int setting, int index);

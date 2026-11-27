@@ -18,6 +18,7 @@
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "gow3_toggles.h"
+#include "gow3_settings.h"
 #include "gow3_watch_range.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "common/debug.h"
@@ -3485,11 +3486,10 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     // gow3 31 Oct 2026 (GOW3_NO_MOTION_BLUR=1, The Last of Us): the two motion blur shaders run on
     // cleared velocity buffers (RG16F, camera dd3851a0, objects eeec117), so they blur nothing.
     // Skipping them instead left the final composite blending their last image forever.
-    static const bool no_motion_blur = [] {
-        const char* env = std::getenv("GOW3_NO_MOTION_BLUR");
-        return env && env[0] == '1';
-    }();
-    if (no_motion_blur && (cs.pgm_hash == 0xdd3851a0 || cs.pgm_hash == 0x0eeec117)) {
+    // 26 Nov 2026: live, from the settings' post_effects_off (bit 0; GOW3_NO_MOTION_BLUR sets it
+    // at start), so the launcher and the game's PC SETTINGS page switch it.
+    if ((cs.pgm_hash == 0xdd3851a0 || cs.pgm_hash == 0x0eeec117) &&
+        (Gow3Settings::Get().post_effects_off.load(std::memory_order_relaxed) & 1u)) {
         for (const auto& image_desc : cs.images) {
             if (image_desc.is_written) {
                 continue;

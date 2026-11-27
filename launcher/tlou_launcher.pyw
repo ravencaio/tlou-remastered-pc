@@ -1804,6 +1804,51 @@ ANISO_TEXT = {
 for _code, (_label, _off) in ANISO_TEXT.items():
     TEXTS[_code].update({"aniso": _label, "aniso_off": _off})
 ANISO_LEVELS = ("2", "4", "8", "16")
+# The game's post-processing effects (gow3.ini post_effects_off, a list of these names; also in the
+# game's Options > PC SETTINGS, live): the button that opens their window, its note, and the
+# effects' names in POST_EFFECTS order (src/runtime_post_effects.h).
+POST_EFFECTS = ("motion_blur", "depth_of_field", "bloom", "lens_flare", "light_shafts", "vignette",
+                "film_grain", "color_grading")
+POST_TEXT = {
+    "pt": ("Efeitos de pós-processamento...", "Marque os efeitos que o jogo deve desenhar. Também dá para mudar durante o jogo em Opções > CONFIGURAÇÕES DE PC, sem reiniciar.",
+           ("Desfoque de movimento", "Profundidade de campo", "Bloom (brilho em volta das luzes)", "Reflexo de lente do sol",
+            "Feixes de luz (raios de sol na tela)", "Vinheta (bordas escuras)", "Granulação de filme", "Correção de cor (LUT)")),
+    "en": ("Post-processing effects...", "Tick the effects the game should draw. They can also be changed in game in Options > PC SETTINGS, without restarting.",
+           ("Motion blur", "Depth of field", "Bloom (glow around lights)", "Sun lens flare",
+            "Light shafts (screen-space sun rays)", "Vignette (dark edges)", "Film grain", "Color grading (LUT)")),
+    "es": ("Efectos de posprocesado...", "Marca los efectos que el juego debe dibujar. También se pueden cambiar durante el juego en Opciones > AJUSTES DE PC, sin reiniciar.",
+           ("Desenfoque de movimiento", "Profundidad de campo", "Bloom (resplandor de las luces)", "Destello de lente del sol",
+            "Rayos de luz (rayos de sol en pantalla)", "Viñeta (bordes oscuros)", "Grano de película", "Corrección de color (LUT)")),
+    "fr": ("Effets de post-traitement...", "Cochez les effets que le jeu doit dessiner. Ils se changent aussi en jeu dans Options > PARAMÈTRES PC, sans redémarrer.",
+           ("Flou de mouvement", "Profondeur de champ", "Bloom (halo des lumières)", "Reflets d'objectif du soleil",
+            "Rayons de lumière (rayons du soleil à l'écran)", "Vignettage (bords sombres)", "Grain de pellicule", "Étalonnage des couleurs (LUT)")),
+    "de": ("Nachbearbeitungseffekte...", "Die Effekte ankreuzen, die das Spiel zeichnen soll. Sie lassen sich auch im Spiel unter Optionen > PC-EINSTELLUNGEN ändern, ohne Neustart.",
+           ("Bewegungsunschärfe", "Tiefenschärfe", "Bloom (Leuchten um Lichter)", "Linsenreflexe der Sonne",
+            "Lichtstrahlen (Sonnenstrahlen im Bild)", "Vignettierung (dunkle Ränder)", "Filmkorn", "Farbkorrektur (LUT)")),
+    "it": ("Effetti di post-elaborazione...", "Seleziona gli effetti che il gioco deve disegnare. Si possono cambiare anche in gioco in Opzioni > IMPOSTAZIONI PC, senza riavviare.",
+           ("Sfocatura di movimento", "Profondità di campo", "Bloom (alone delle luci)", "Riflessi dell'obiettivo del sole",
+            "Raggi di luce (raggi del sole sullo schermo)", "Vignettatura (bordi scuri)", "Grana della pellicola", "Correzione colore (LUT)")),
+    "pl": ("Efekty postprocessingu...", "Zaznacz efekty, które gra ma rysować. Można je też zmienić w grze w Opcje > USTAWIENIA PC, bez restartu.",
+           ("Rozmycie ruchu", "Głębia ostrości", "Bloom (poświata świateł)", "Odblaski obiektywu od słońca",
+            "Snopy światła (promienie słońca na ekranie)", "Winieta (ciemne brzegi)", "Ziarno filmowe", "Korekcja kolorów (LUT)")),
+    "ru": ("Эффекты постобработки...", "Отметьте эффекты, которые игра должна рисовать. Их можно менять и в игре: Параметры > НАСТРОЙКИ ПК, без перезапуска.",
+           ("Размытие в движении", "Глубина резкости", "Bloom (свечение вокруг источников)", "Блики объектива от солнца",
+            "Световые лучи (солнечные лучи на экране)", "Виньетка (тёмные края)", "Зернистость плёнки", "Цветокоррекция (LUT)")),
+    "ja": ("ポストプロセス効果...", "ゲームで描画する効果にチェックを入れます。ゲーム中も オプション > PC設定 で再起動なしに変更できます。",
+           ("モーションブラー", "被写界深度", "ブルーム（光のにじみ）", "太陽のレンズフレア",
+            "光の筋（画面上の太陽光線）", "ビネット（周辺減光）", "フィルムグレイン", "カラーグレーディング（LUT）")),
+}
+for _code, (_button, _note, _names) in POST_TEXT.items():
+    TEXTS[_code].update({"post_effects": _button, "post_note": _note})
+    TEXTS[_code].update({"post_" + _name: _text for _name, _text in zip(POST_EFFECTS, _names)})
+
+
+def post_effects_off(ini, switches):
+    """The effects switched off: gow3.ini's list, else (a file from before 26 Nov 2026) the motion
+    blur as the launcher's old switch had it (off by default)."""
+    if "post_effects_off" in ini:
+        return {name for name in ini["post_effects_off"].split(",") if name.strip() in POST_EFFECTS}
+    return set() if switches.get("motion_blur") else {"motion_blur"}
 # What each option of the main screen does, shown by its (i) icon (English for a missing text).
 INFO_TEXT = {
     "pt": {
@@ -1813,6 +1858,7 @@ INFO_TEXT = {
         "ambient_half": "Desenha as sombras suaves de contato (personagens, veículos, objetos) em meia resolução em vez de um quarto: o contorno claro onde pés e rodas tocam o chão fica com metade da largura. Custa um pouco de desempenho.",
         "quarter_depth": "Mistura essas sombras usando a profundidade do mesmo pixel em que foram calculadas, em vez da do pixel mais distante: menos contorno claro ou escuro na borda dos personagens. Sem custo perceptível.",
         "motion_blur": "Desfoque de movimento do jogo ao girar a câmera e em objetos rápidos.",
+        "post_effects": "Liga ou desliga cada efeito de pós-processamento do jogo: desfoque de movimento, profundidade de campo, bloom, reflexo de lente, feixes de luz, vinheta, granulação e correção de cor.",
         "job_sleep": "As threads de trabalho do jogo dormem quando não há tarefa, em vez de ficarem girando: menos uso de CPU e calor, mesmo desempenho.",
         "profile": "Grava um perfil de desempenho para diagnóstico de problemas (cerca de 10% menos FPS). Deixe desligado para jogar.",
         "background_shaders": "Compila shaders novos em segundo plano: menos travadas, mas algum objeto pode aparecer um instante depois. Desligado: o jogo espera cada shader.",
@@ -1828,6 +1874,7 @@ INFO_TEXT = {
         "ambient_half": "Draws the soft contact shadows (characters, vehicles, props) at half resolution instead of a quarter: the light outline where feet and wheels touch the ground is half as wide. Costs some performance.",
         "quarter_depth": "Blends those shadows with the depth of the pixel they were computed at instead of the farthest one: less light or dark outline along characters' edges. No noticeable cost.",
         "motion_blur": "The game's motion blur when turning the camera and on fast objects.",
+        "post_effects": "Turns each of the game's post-processing effects on or off: motion blur, depth of field, bloom, lens flare, light shafts, vignette, film grain and color grading.",
         "job_sleep": "The game's worker threads sleep when they have nothing to do instead of spinning: less CPU use and heat, same performance.",
         "profile": "Records a performance profile to diagnose problems (about 10% fewer FPS). Keep it off to play.",
         "background_shaders": "Compiles new shaders in the background: fewer stutters, but an object may appear a moment late. Off: the game waits for each shader.",
@@ -2520,7 +2567,6 @@ def game_env(switches, base=None, overrides=None, folders=None):
         env["GOW3_GPU_CACHE_DIR"] = folders["cache"]
     if folders and folders.get("update"):
         env["TLOU_UPDATE"] = folders["update"]   # tools/probe_tlou.py find_update
-    env["GOW3_NO_MOTION_BLUR"] = "0" if switches["motion_blur"] else "1"
     env["TLOU_JOB_SLEEP"] = "1" if switches["job_sleep"] else "0"
     env["TLOU_PRO_SHADOWS"] = "1" if switches["pro_shadows"] else "0"
     env["TLOU_AMBIENT_SHADOWS"] = "half" if switches.get("ambient_half", True) else "quarter"
@@ -3142,6 +3188,7 @@ class Launcher(tk.Tk):
         self.was_running = False
         self.debug_window = None
         self.folders_window = None
+        self.post_window = None
         self.controls_window = None
         self.language = read_ui_language()
         self.folders = read_folders()
@@ -3201,7 +3248,7 @@ class Launcher(tk.Tk):
     def build(self):
         """The whole window: called again when the launcher's language changes."""
         for child in self.winfo_children():
-            if child not in (self.debug_window, self.folders_window, self.controls_window):
+            if child not in (self.debug_window, self.folders_window, self.controls_window, self.post_window):
                 child.destroy()
         ini, switches = read_ini(), read_switches()
         canvas = self.canvas = tk.Canvas(self, width=self.WIDTH, height=self.HEIGHT, bg=BG, highlightthickness=0)
@@ -3266,14 +3313,19 @@ class Launcher(tk.Tk):
         self.info(panel, row + 7, "ambient_half")
         self.info(panel, row + 8, "quarter_depth")
         row = self.section(panel, row + 11, self.t("game"))
-        self.motion_blur = self.check(panel, row, self.t("motion_blur"), switches["motion_blur"])
+        self.post_off = post_effects_off(ini, switches)
+        if "post_effects_off" not in ini:    # once, from the old motion blur switch
+            write_ini({"post_effects_off": ",".join(n for n in POST_EFFECTS if n in self.post_off) or "none"})
+        tk.Button(panel, text=self.t("post_effects"), command=self.open_post_effects, bg=PANEL, fg=TEXT, bd=0,
+                  cursor="hand2", activebackground="#222", activeforeground=ACCENT, font=("Segoe UI", 10),
+                  anchor="w", padx=8).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
         self.job_sleep = self.check(panel, row + 1, self.t("job_sleep"), switches["job_sleep"])
         self.profile = self.check(panel, row + 2, self.t("profile"), switches["profile"])
         self.background_shaders = self.check(panel, row + 3, self.t("background_shaders"), switches["background_shaders"])
         self.pro_shadows = self.check(panel, row + 4, self.t("pro_shadows"), switches["pro_shadows"])
         self.volumetric_rays = self.check(panel, row + 5, self.t("volumetric_rays"),
                                           switches.get("volumetric_rays", False))
-        self.info(panel, row, "motion_blur")
+        self.info(panel, row, "post_effects")
         self.info(panel, row + 1, "job_sleep")
         self.info(panel, row + 2, "profile")
         self.info(panel, row + 3, "background_shaders")
@@ -3380,7 +3432,7 @@ class Launcher(tk.Tk):
         window = self.debug_window
         if window is not None and window.winfo_exists():
             window.destroy()
-        for window in (self.folders_window, self.controls_window):
+        for window in (self.folders_window, self.controls_window, self.post_window):
             if window is not None and window.winfo_exists():
                 window.destroy()
         self.build()
@@ -3394,7 +3446,7 @@ class Launcher(tk.Tk):
         return ""
 
     def switches(self):
-        return {"motion_blur": self.motion_blur.get(), "job_sleep": self.job_sleep.get(), "profile": self.profile.get(),
+        return {"motion_blur": "motion_blur" not in self.post_off, "job_sleep": self.job_sleep.get(), "profile": self.profile.get(),
                 "background_shaders": self.background_shaders.get(), "pro_shadows": self.pro_shadows.get(),
                 "ambient_half": self.ambient_half.get(), "quarter_depth": self.quarter_depth.get(),
                 "low_vram": self.vram_labels.get(self.low_vram.get(), "auto"),
@@ -4376,6 +4428,42 @@ class Launcher(tk.Tk):
             save()
 
         self.reset_link(outer, reset)
+
+    def save_post_effects(self):
+        """Only this key: the game writes the file too (PC SETTINGS), so the launcher's other
+        saves leave it alone."""
+        write_ini({"post_effects_off": ",".join(n for n in POST_EFFECTS if n in self.post_off) or "none"})
+        self.save()
+
+    def open_post_effects(self):
+        """The post-processing effects, one switch each (ticked: the game draws it)."""
+        if self.post_window is not None and self.post_window.winfo_exists():
+            self.post_window.lift()
+            return
+        self.post_window = window = tk.Toplevel(self, bg=BG)
+        window.title(self.t("post_effects").rstrip("."))
+        window.resizable(False, False)
+        window.geometry(f"+{self.winfo_rootx() + 60}+{self.winfo_rooty() + 90}")
+        # The game may have changed them (PC SETTINGS) since the launcher started.
+        self.post_off = post_effects_off(read_ini(), self.switches())
+        tk.Label(window, text=self.t("post_note"), bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left",
+                 wraplength=420).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
+        window.switches = {}
+        for row, name in enumerate(POST_EFFECTS, start=1):
+            variable = tk.BooleanVar(value=name not in self.post_off)
+
+            def changed(name=name, variable=variable):
+                if variable.get():
+                    self.post_off.discard(name)
+                else:
+                    self.post_off.add(name)
+                self.save_post_effects()
+
+            tk.Checkbutton(window, text=self.t("post_" + name), variable=variable, command=changed, bg=BG, fg=TEXT,
+                           selectcolor=PANEL, activebackground=BG, activeforeground=TEXT, font=("Segoe UI", 10), bd=0,
+                           highlightthickness=0, anchor="w").grid(row=row, column=0, sticky="w", padx=16)
+            window.switches[name] = variable    # (tests)
+        tk.Frame(window, bg=BG, height=12).grid(row=len(POST_EFFECTS) + 1, column=0)
 
     def open_folders(self):
         if self.folders_window is not None and self.folders_window.winfo_exists():
