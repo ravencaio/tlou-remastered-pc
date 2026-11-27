@@ -21,7 +21,6 @@
 #include "video_core/host_shaders/vol_spot_resolve_frag.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/renderer_vulkan/vk_volumetric_light.h"
-#include "video_core/texture_cache/image.h"
 
 namespace Vulkan::VolumetricLight {
 
@@ -361,104 +360,6 @@ int GridVariant(const Shader::Info& cs) {
         }
     }
     return g_fitting[index].load(std::memory_order_relaxed) & (1u << variant) ? variant : -1;
-}
-
-bool IsLineSampler(u64 pgm_hash) {
-    size_t index;
-    return FindSampler(pgm_hash, index) != nullptr;
-}
-
-std::span<const std::pair<u32, u32>> ReadDwords(u64 pgm_hash) {
-    // The sun's and moon's samplers: their fixed words and the shadow cascades' rows
-    // (128 + 20 per cascade, 8 at most); words 36-47 of their buffer change while the game is
-    // paused and are not read. The spot ones read words 0-47.
-    static constexpr std::pair<u32, u32> directional[] = {{0, 1}, {10, 15}, {50, 56}, {88, 288}};
-    static constexpr std::pair<u32, u32> spot[] = {{0, 48}};
-    size_t index;
-    const LineSampler* sampler = FindSampler(pgm_hash, index);
-    if (!sampler) {
-        return {};
-    }
-    if (sampler->first == Directional) {
-        return directional;
-    }
-    return spot;
-}
-
-namespace {
-std::atomic<u64> g_frame{0};
-std::atomic<u64> g_repeats{0};
-} // namespace
-
-void NewFrame() {
-    g_frame.fetch_add(1, std::memory_order_relaxed);
-}
-
-GridCopy GridCache(vk::Device device, VmaAllocator allocator, u64 key, vk::Format format) {
-    static const bool on = [] {
-        const char* env = std::getenv("GOW3_VOL_REPEATS");
-        return !(env && env[0] == '0');
-    }();
-    if (!on) {
-        return {};
-    }
-    // Line samplers are recorded on one thread at a time (the GPU thread or the draw pipe's).
-    static std::mutex mutex;
-    std::scoped_lock lock{mutex};
-    struct Slot {
-        VideoCore::UniqueImage image;
-        vk::Format format{};
-        u64 key = 0, frame = ~0ull, used = 0;
-    };
-    // The sun and the moon alternate: one each, and spares. Never destroyed: at exit the
-    // allocator is gone before static objects would be.
-    static std::span<Slot> slots{new Slot[4], 4};
-    static u64 uses = 0;
-    const u64 frame = g_frame.load(std::memory_order_relaxed);
-    for (auto& slot : slots) {
-        if (slot.image && slot.key == key && slot.frame == frame && slot.format == format) {
-            slot.used = ++uses;
-            if (g_repeats.fetch_add(1, std::memory_order_relaxed) == 0) {
-                std::printf("Volumetric light: repeated line sampler dispatches in a frame reuse "
-                            "their grid (paused game or photo mode; GOW3_VOL_REPEATS=0: computed "
-                            "every time)\n");
-                std::fflush(stdout);
-            }
-            return {slot.image.image, true, false};
-        }
-    }
-    // A slot not filled this frame, else the least recently used one.
-    Slot* chosen = &slots[0];
-    for (auto& slot : slots) {
-        if (slot.frame != frame) {
-            chosen = &slot;
-            break;
-        }
-        if (slot.used < chosen->used) {
-            chosen = &slot;
-        }
-    }
-    bool fresh = false;
-    if (!chosen->image || chosen->format != format) {
-        chosen->image = VideoCore::UniqueImage(device, allocator);
-        chosen->image.Create(vk::ImageCreateInfo{
-            .imageType = vk::ImageType::e2D,
-            .format = format,
-            .extent = {512, 512, 1},
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = vk::SampleCountFlagBits::e1,
-            .tiling = vk::ImageTiling::eOptimal,
-            .usage = vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
-            .initialLayout = vk::ImageLayout::eUndefined,
-        });
-        chosen->format = format;
-        fresh = true;
-    }
-    chosen->key = key;
-    chosen->frame = frame;
-    chosen->used = ++uses;
-    return {chosen->image.image, false, fresh};
 }
 
 vk::Pipeline GridPipeline(vk::Device device, vk::PipelineLayout layout, int variant) {

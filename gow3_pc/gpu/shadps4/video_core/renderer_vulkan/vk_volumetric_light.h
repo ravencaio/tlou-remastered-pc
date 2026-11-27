@@ -22,8 +22,6 @@
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
-VK_DEFINE_HANDLE(VmaAllocator)
-
 namespace Shader {
 struct Info;
 }
@@ -42,26 +40,6 @@ int GridVariant(const Shader::Info& cs);
 /// The grid pass's pipeline for that variant and the line sampler's pipeline layout (created on
 /// first use; null if it cannot be).
 vk::Pipeline GridPipeline(vk::Device device, vk::PipelineLayout layout, int variant);
-
-/// gow3 25 Nov 2026: while the game is paused or in photo mode it dispatches the same line
-/// sampler (and draws its resolve) ~24 times a frame with the same inputs (traced: same
-/// constants, same images). The game's dispatch always runs (it also clears an image another
-/// pass accumulates into: skipping it left a black patch at the sun), but the grid is computed
-/// once per frame and key (shader, the constant words it reads, the bound images) and copied
-/// back over the lines for the repeats. GOW3_VOL_REPEATS=0 computes every one.
-bool IsLineSampler(u64 pgm_hash);
-/// The constant dwords (from its buffer's start) the line sampler reads, as [begin, end)
-/// ranges (from the translations; the buffer's other words change while paused, unread).
-std::span<const std::pair<u32, u32>> ReadDwords(u64 pgm_hash);
-struct GridCopy {
-    vk::Image image; ///< null: no cache (compute the grid, keep nothing)
-    bool hit;        ///< holds this key's grid of this frame: copy it, no grid pass
-    bool fresh;      ///< just created: its layout is still undefined
-};
-/// The cache image for this key's grid in this frame (format: the line sampler's image's).
-GridCopy GridCache(vk::Device device, VmaAllocator allocator, u64 key, vk::Format format);
-/// The presenter's flip: the next frame's grids are computed anew.
-void NewFrame();
 
 /// Workgroups of the grid pass (8x8 threads, one a cell of 512x512).
 constexpr u32 GridGroups = 512 / 8;

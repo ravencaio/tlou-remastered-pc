@@ -90,36 +90,24 @@ void main() {
         // Neighboring cells sample different positions of each interval (a fixed pattern, so a
         // paused photo looks the same).
         const float phase = fract(0.5 + float(pixel.x) * 0.754877666 + float(pixel.y) * 0.569840296);
-        // The samples' depth grows along the ray, so the cascade only moves forward: its five
-        // rows are read when it changes (at most once per cascade), not at every sample.
-        int cascade = -1;
-        float nextSplit = 0.0;
-        vec4 toShadowS, toShadowT, backX, backY, backZ;
         for (int i = 0; i < 96; ++i) {
             const vec3 pos = dir * mix(extent.x, end, (float(i) + phase) / 96.0);
-            if (cascade < 0 || (cascade + 1 < cascades && pos.z > nextSplit)) {
-                int c = max(cascade, 0);
-                while (c + 1 < cascades && pos.z > lightParam(off, 120u + uint(c))) {
-                    ++c;
-                }
-                cascade = c;
-                nextSplit = cascade + 1 < cascades ? lightParam(off, 120u + uint(cascade)) : 1e30;
-                const uint base = 128u + 20u * uint(cascade);
-                toShadowS = lightRow(off, base);
-                toShadowT = lightRow(off, base + 4u);
-                backX = lightRow(off, base + 8u);
-                backY = lightRow(off, base + 12u);
-                backZ = lightRow(off, base + 16u);
+            int cascade = 0;
+            while (cascade + 1 < cascades && pos.z > lightParam(off, 120u + uint(cascade))) {
+                ++cascade;
             }
+            const uint base = 128u + 20u * uint(cascade);
             const vec4 pt = vec4(pos, 1.0);
-            vec2 st = vec2(dot(toShadowS, pt), dot(toShadowT, pt));
+            vec2 st = vec2(dot(lightRow(off, base), pt), dot(lightRow(off, base + 4u), pt));
             // Across the shadow texel's footprint as the ray advances.
             const vec2 offset = fract((float(i) + phase) * vec2(0.618034, 0.414214)) - 0.5;
             st += 2.0 * offset * shadowTexel;
             const float shadow = textureLod(sampler2DArray(shadow_cascades, point_sampler),
                                             vec3(st, float(cascade)), 0.0).x;
             const vec4 coord = vec4(st, shadow, 1.0);
-            const vec3 blocker = vec3(dot(backX, coord), dot(backY, coord), dot(backZ, coord));
+            const vec3 blocker = vec3(dot(lightRow(off, base + 8u), coord),
+                                      dot(lightRow(off, base + 12u), coord),
+                                      dot(lightRow(off, base + 16u), coord));
             visibility += smoothstep(-0.022, 0.022, dot(lightDir, blocker - pos)) / 96.0;
         }
     }

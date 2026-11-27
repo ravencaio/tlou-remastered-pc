@@ -73,20 +73,12 @@ float volumeVisibility(vec2 uv, float z, float far) {
     vec2 f = fract(coord);
     float sum = 0.0, weight = 0.0;
     z = min(z, far);
-    const float tolerance = 1.0 / max(0.08, 0.015 * abs(z));
-    // The Gaussian over distance is separable: 6 + 6 exponentials instead of 36.
-    float gx[6], gy[6];
-    for (int i = 0; i < 6; ++i) {
-        const vec2 d = vec2(float(i - 2)) - f;
-        gx[i] = exp(-0.5 * d.x * d.x / 1.44);
-        gy[i] = exp(-0.5 * d.y * d.y / 1.44);
-    }
-    for (int y = 0; y < 6; ++y) {
-        for (int x = 0; x < 6; ++x) {
-            vec2 v = texelFetch(fs_img2, clamp(cell + ivec2(x - 2, y - 2), ivec2(0), ivec2(511)), 0).rg;
-            float delta = (v.y - z) * tolerance;
-            float delta2 = delta * delta;
-            float w = gx[x] * gy[y] / (1.0 + delta2 * delta2);
+    for (int y = -2; y <= 3; ++y) {
+        for (int x = -2; x <= 3; ++x) {
+            vec2 v = texelFetch(fs_img2, clamp(cell + ivec2(x, y), ivec2(0), ivec2(511)), 0).rg;
+            float delta = (v.y - z) / max(0.08, 0.015 * abs(z));
+            vec2 dist = vec2(x, y) - f;
+            float w = exp(-0.5 * dot(dist, dist) / 1.44) / (1.0 + delta * delta * delta * delta);
             sum += w * (-2.0 - v.x);
             weight += w;
         }

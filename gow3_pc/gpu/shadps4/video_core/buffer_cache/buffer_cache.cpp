@@ -4057,26 +4057,6 @@ void BufferCache::PollPeeks() {
             old.assign(values, values + count);
         }
         ++scanned;
-        // GOW3_VOL_TRACE (vk_rasterizer.cpp): a volumetric resolve's indirect draw arguments
-        // (slot 0x55) or count (0x56) as the GPU wrote them.
-        if ((peek.tag == 0xad16e118 || peek.tag == 0xca25dbad) &&
-            (peek.slot == 0x55 || peek.slot == 0x56)) {
-            static int lines = 0;
-            if (lines++ < 6000) {
-                const auto* words = reinterpret_cast<const u32*>(peek.mapped);
-                std::string text;
-                for (u64 i = 0; i < std::min<u64>(count, 10); ++i) {
-                    text += fmt::format(" {}", words[i]);
-                }
-                std::printf("Volumetric trace %s ps %08llx t=%.1f @%#llx:%s\n",
-                            peek.slot == 0x55 ? "args" : "count",
-                            static_cast<unsigned long long>(peek.tag), peek.ms,
-                            static_cast<unsigned long long>(peek.address), text.c_str());
-                std::fflush(stdout);
-            }
-            peeks.pop_front();
-            continue;
-        }
         // 1c957b01's constant block (slot 1, read before the dispatch): dwords 60-72 and 155-171
         // (68: the step time factor, 160: the step count), 30 s in, 12 dispatches.
         if (peek.tag == 0x1c957b01 && peek.slot == 1 && peek.phase == 0 && peek.ms > 30000 && peek.size >= 688) {

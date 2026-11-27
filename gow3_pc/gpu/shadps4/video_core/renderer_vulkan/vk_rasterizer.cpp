@@ -2515,75 +2515,6 @@ void Rasterizer::OnFrameCompute(const Shader::Info& cs) {
     }
 }
 
-// GOW3_VOL_TRACE=1 (diagnostics): each volumetric light resolve draw (ps ad16e118, ca25dbad):
-// its arguments, viewport, scissor, target and hashes of both stages' user data, 300 lines.
-static void TraceVolumetricResolve(Rasterizer& rasterizer, const GraphicsPipeline* pipeline,
-                                   const AmdGpu::Regs& regs, const u32* indirect_args) {
-    static const bool on = [] {
-        const char* env = std::getenv("GOW3_VOL_TRACE");
-        return env && env[0] == '1';
-    }();
-    const auto* fragment = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
-    if (!on || !fragment || (fragment->pgm_hash != 0xad16e118 && fragment->pgm_hash != 0xca25dbad)) {
-        return;
-    }
-    static std::atomic<int> lines{0};
-    static const auto t0 = std::chrono::steady_clock::now();
-    if (lines.fetch_add(1) >= 300) {
-        return;
-    }
-    const auto hash = [](const auto& data) {
-        u64 h = 1469598103934665603ull;
-        for (const u32 v : data) {
-            h = (h ^ v) * 1099511628211ull;
-        }
-        return static_cast<unsigned>(h & 0xFFFFFF);
-    };
-    const auto& vp = regs.viewports[0];
-    const auto& sc = regs.viewport_scissors[0];
-    static const double after = [] {
-        const char* env = std::getenv("GOW3_VOL_TRACE_AFTER");
-        return env ? std::atof(env) : 0.0;
-    }();
-    if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() <
-        after) {
-        --lines;
-        return;
-    }
-    std::string args = indirect_args ? std::string(" indirect") : std::string(" direct");
-    // The resolve's constants (its first buffer, words 0-127): all of them, the light's color
-    // (28-30) and the volume's box (104-117).
-    if (!fragment->buffers.empty() && !fragment->buffers[0].IsSpecial()) {
-        const auto sharp = fragment->buffers[0].GetSharp(*fragment);
-        if (sharp.base_address && sharp.GetSize() >= 512 &&
-            rasterizer.IsMapped(sharp.base_address, 512)) {
-            const auto* w = reinterpret_cast<const u32*>(sharp.base_address);
-            const auto range = [&](size_t from, size_t to) {
-                u64 h = 1469598103934665603ull;
-                for (size_t i = from; i < to; ++i) {
-                    h = (h ^ w[i]) * 1099511628211ull;
-                }
-                return static_cast<unsigned>(h & 0xFFFFFF);
-            };
-            args += fmt::format(" consts {:06x} color {:06x} box {:06x} ({:g} {:g} {:g})",
-                                range(0, 128), range(28, 31), range(104, 118),
-                                std::bit_cast<float>(w[28]), std::bit_cast<float>(w[29]),
-                                std::bit_cast<float>(w[30]));
-        }
-    }
-    const double ms =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    std::printf("Volumetric trace draw ps %08llx t=%.1f%s indices %u instances %u viewport "
-                "%.0f,%.0f %.0f,%.0f scissor %u,%u-%u,%u target %#llx ps-ud %06x vs-ud %06x\n",
-                static_cast<unsigned long long>(fragment->pgm_hash), ms, args.c_str(),
-                regs.num_indices, regs.num_instances.NumInstances(), vp.xscale, vp.xoffset,
-                vp.yscale, vp.yoffset, u32(sc.top_left_x), u32(sc.top_left_y),
-                u32(sc.bottom_right_x), u32(sc.bottom_right_y),
-                static_cast<unsigned long long>(regs.color_buffers[0].Address()),
-                hash(regs.ps_program.user_data), hash(regs.vs_program.user_data));
-    std::fflush(stdout);
-}
-
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
     const auto* fragment=pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
@@ -2594,7 +2525,6 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     }
     scheduler.Checkpoint("draw",pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
                          fragment ? fragment->pgm_hash : 0);
-    TraceVolumetricResolve(*this, pipeline, Regs(), nullptr);
     // gow3 21 Oct 2026 diagnostics (a missing carpet), GOW3_MESH_DUMP=<index buffer hex>:
     // for draws of that mesh, the vertex shader's user data and the 16 dwords behind each
     // pointer of its resource table (as floats), once per vertex shader every 10 s, to compare
@@ -3130,7 +3060,6 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     if (!BindResources(pipeline)) {
         return;
     }
-    TraceVolumetricResolve(*this, pipeline, Regs(), reinterpret_cast<const u32*>(1));
     const auto state = BeginRendering(pipeline);
 
     BindVertexBuffers(pipeline);
@@ -3151,31 +3080,6 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
 
     if (needs_barrier) {
         runtime.FlushBarriers();
-    }
-    // GOW3_VOL_TRACE=1 (diagnostics): the GPU-written arguments of the volumetric light
-    // resolves' indirect draws (BufferCache::PollPeeks prints them), GOW3_VOL_TRACE_AFTER ms
-    // after the first indirect draw on.
-    if (static const bool vol_trace = [] {
-            const char* env = std::getenv("GOW3_VOL_TRACE");
-            return env && env[0] == '1';
-        }();
-        vol_trace) {
-        const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
-        static const auto t0 = std::chrono::steady_clock::now();
-        static const double after = [] {
-            const char* env = std::getenv("GOW3_VOL_TRACE_AFTER");
-            return env ? std::atof(env) : 0.0;
-        }();
-        const double ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        if (ps && (ps->pgm_hash == 0xad16e118 || ps->pgm_hash == 0xca25dbad) && ms >= after) {
-            buffer_cache.PeekGpuBuffer(buffer, base, indirect.args, stride * max_count,
-                                       ps->pgm_hash, 0x55, 0, 0);
-            if (count_address != 0) {
-                buffer_cache.PeekGpuBuffer(count_buffer, count_offset, count_address, 4,
-                                           ps->pgm_hash, 0x56, 0, 0);
-            }
-        }
     }
 
     // gow3: screen-space (clip disabled) draws into the upscaler's output-size images.
@@ -3457,32 +3361,6 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     if (ExecuteShaderHLE(cs, Regs(), cs_program, *this)) {
         return;
     }
-    // gow3 25 Nov 2026 (vk_volumetric_light.h): the key of a volumetric line sampler's inputs
-    // (the constant words it reads and the images it binds); a repeat in the same frame
-    // (paused game, photo mode: ~24 a frame) reuses its grid. 0: no key.
-    u64 vol_key = 0;
-    if (VolumetricLight::IsLineSampler(cs.pgm_hash) && !cs.buffers.empty() &&
-        !cs.buffers[0].IsSpecial()) {
-        const auto sharp = cs.buffers[0].GetSharp(cs);
-        const u64 bytes = std::min<u64>(sharp.GetSize(), 4096);
-        u64 key = 1469598103934665603ull ^ cs.pgm_hash;
-        const auto mix = [&key](u64 v) { key = (key ^ v) * 1099511628211ull; };
-        for (const auto& desc : cs.images) {
-            mix(desc.GetSharp(cs).Address());
-        }
-        if (bytes && sharp.base_address && IsMapped(sharp.base_address, bytes)) {
-            std::array<u32, 1024> words{};
-            memory->CopySparseMemory(sharp.base_address, reinterpret_cast<u8*>(words.data()),
-                                     bytes);
-            for (const auto& [begin, end] : VolumetricLight::ReadDwords(cs.pgm_hash)) {
-                for (u32 i = begin; i < end && i < bytes / 4; ++i) {
-                    mix(words[i]);
-                }
-            }
-            mix(bytes);
-            vol_key = key | 1; // never 0
-        }
-    }
     // gow3 31 Oct 2026 (GOW3_NO_MOTION_BLUR=1, The Last of Us): the two motion blur shaders run on
     // cleared velocity buffers (RG16F, camera dd3851a0, objects eeec117), so they blur nothing.
     // Skipping them instead left the final composite blending their last image forever.
@@ -3623,86 +3501,10 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     // lights' line samplers are followed by the camera-ray grid, written over their lines with
     // their layout, descriptors and push constants (still bound: the layout is the same).
     const int grid_variant = VolumetricLight::GridVariant(cs);
-    // GOW3_VOL_TRACE=1 (diagnostics): per grid pass, the time, the image it writes and hashes of
-    // the light's constant groups (camera 0-7, lines 24-27, the volume's box 104-127, the shadow
-    // cascades 128-287), 400 lines at most.
-    static const bool vol_trace = [] {
-        const char* env = std::getenv("GOW3_VOL_TRACE");
-        return env && env[0] == '1';
-    }();
-    if (vol_trace && grid_variant >= 0 && !cs.buffers.empty() && !cs.buffers[0].IsSpecial()) {
-        static std::atomic<int> lines{0};
-        static const auto t0 = std::chrono::steady_clock::now();
-        const auto sharp = cs.buffers[0].GetSharp(cs);
-        std::array<u32, 288> c{};
-        const u64 bytes = std::min<u64>(sharp.GetSize(), sizeof(c));
-        if (lines.fetch_add(1) < 400 && sharp.base_address && IsMapped(sharp.base_address, bytes)) {
-            memory->CopySparseMemory(sharp.base_address, reinterpret_cast<u8*>(c.data()), bytes);
-            const auto group = [&](size_t from, size_t to) {
-                u64 h = 1469598103934665603ull;
-                for (size_t i = from; i < to; ++i) {
-                    h = (h ^ c[i]) * 1099511628211ull;
-                }
-                return static_cast<unsigned>(h & 0xFFFFFF);
-            };
-            u64 atlas = 0;
-            std::string image_list;
-            for (const auto& image : cs.images) {
-                const u64 address = image.GetSharp(cs).Address();
-                image_list += fmt::format(" {:#x}", address);
-                if (image.is_written) {
-                    atlas = address;
-                }
-            }
-            const double ms = std::chrono::duration<double, std::milli>(
-                                  std::chrono::steady_clock::now() - t0).count();
-            // The dwords that differ from this shader's previous dispatch (value now).
-            static std::unordered_map<u64, std::array<u32, 288>> previous;
-            std::string changed;
-            const auto prev = previous.find(cs.pgm_hash);
-            for (size_t i = 0; prev != previous.end() && i < bytes / 4 && changed.size() < 300; ++i) {
-                if (prev->second[i] != c[i]) {
-                    changed += fmt::format(" {}={:g}", i, std::bit_cast<float>(c[i]));
-                }
-            }
-            previous[cs.pgm_hash] = c;
-            std::printf("Volumetric trace %08llx t=%.1f image %#llx groups %u size %llu: camera "
-                        "%06x lines %06x box %06x cascades %06x; images%s; changed:%s\n",
-                        static_cast<unsigned long long>(cs.pgm_hash), ms,
-                        static_cast<unsigned long long>(atlas), cs_program.dim_y,
-                        static_cast<unsigned long long>(sharp.GetSize()), group(0, 8),
-                        group(24, 28), group(104, 128), group(128, 288), image_list.c_str(),
-                        changed.c_str());
-            std::fflush(stdout);
-        }
-    }
     const vk::Pipeline grid =
         grid_variant >= 0 ? VolumetricLight::GridPipeline(instance.GetDevice(),
                                                           pipeline->GetLayout(), grid_variant)
                           : vk::Pipeline{};
-    // The grid of a repeat in the same frame is copied from the first one's (the image the
-    // line sampler writes, 512x512, in the general layout as a storage image).
-    vk::Image atlas{};
-    VolumetricLight::GridCopy grid_copy{};
-    if (grid && vol_key) {
-        for (const auto& desc : cs.images) {
-            if (!desc.is_written) {
-                continue;
-            }
-            VideoCore::TextureCache::ImageDesc image_desc(desc.GetSharp(cs), desc);
-            auto& image = texture_cache.GetImage(texture_cache.FindImage(image_desc));
-            if (image.info.size.width == 512 && image.info.size.height == 512) {
-                atlas = image.GetImage();
-                grid_copy = VolumetricLight::GridCache(instance.GetDevice(),
-                                                       instance.GetAllocator(), vol_key,
-                                                       image.info.pixel_format);
-            }
-            break;
-        }
-        if (!atlas) {
-            grid_copy = {};
-        }
-    }
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         if (full_barrier) {
             RecordFullBarrier(cmdbuf);
@@ -3712,52 +3514,16 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         }
         cmdbuf.dispatch(dim_x, dim_y, dim_z);
         if (grid) {
-            const auto barrier = [&](vk::PipelineStageFlags2 src, vk::AccessFlags2 src_access) {
-                const vk::MemoryBarrier2 memory_barrier{
-                    .srcStageMask = src,
-                    .srcAccessMask = src_access,
-                    .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-                    .dstAccessMask =
-                        vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
-                };
-                cmdbuf.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1,
-                                                           .pMemoryBarriers = &memory_barrier});
+            const vk::MemoryBarrier2 after_lines{
+                .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
             };
-            barrier(vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
-            const vk::ImageCopy whole{
-                .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-                .extent = {512, 512, 1},
-            };
-            if (grid_copy.image && grid_copy.fresh) {
-                const vk::ImageMemoryBarrier2 to_general{
-                    .srcStageMask = vk::PipelineStageFlagBits2::eNone,
-                    .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
-                    .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
-                    .oldLayout = vk::ImageLayout::eUndefined,
-                    .newLayout = vk::ImageLayout::eGeneral,
-                    .image = grid_copy.image,
-                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                };
-                cmdbuf.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1,
-                                                           .pImageMemoryBarriers = &to_general});
-            }
-            if (grid_copy.image && grid_copy.hit) {
-                cmdbuf.copyImage(grid_copy.image, vk::ImageLayout::eGeneral, atlas,
-                                 vk::ImageLayout::eGeneral, whole);
-                barrier(vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
-            } else {
-                cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, grid);
-                cmdbuf.dispatch(VolumetricLight::GridGroups, VolumetricLight::GridGroups, 1);
-                if (grid_copy.image) {
-                    barrier(vk::PipelineStageFlagBits2::eComputeShader,
-                            vk::AccessFlagBits2::eShaderWrite);
-                    cmdbuf.copyImage(atlas, vk::ImageLayout::eGeneral, grid_copy.image,
-                                     vk::ImageLayout::eGeneral, whole);
-                    barrier(vk::PipelineStageFlagBits2::eTransfer,
-                            vk::AccessFlagBits2::eTransferWrite | vk::AccessFlagBits2::eTransferRead);
-                }
-            }
+            cmdbuf.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1,
+                                                       .pMemoryBarriers = &after_lines});
+            cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, grid);
+            cmdbuf.dispatch(VolumetricLight::GridGroups, VolumetricLight::GridGroups, 1);
         }
         if (full_barrier) {
             RecordFullBarrier(cmdbuf);
