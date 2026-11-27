@@ -788,6 +788,7 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
         (subres_range->base != SubresourceBase{} || subres_range->extent != info.resources);
     const bool partially_transited = !subresource_states.empty();
 
+    auto merged_stages = dst_stage;
     if (needs_partial_transition || partially_transited) {
         if (!partially_transited) {
             subresource_states.resize(info.resources.levels * vk_layers);
@@ -842,7 +843,13 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                     state.layout = dst_layout;
                     state.access_mask = dst_mask;
                     state.pl_stage = dst_stage;
+                } else {
+                    // A later layout change or write must wait on every stage
+                    // still reading the subresource, including repeated reads
+                    // that did not require a barrier of their own.
+                    state.pl_stage |= dst_stage;
                 }
+                merged_stages |= state.pl_stage;
             }
         }
 
@@ -855,6 +862,7 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                                      vk::AccessFlagBits2::eMemoryWrite;
         const bool is_write = static_cast<bool>(last_state.access_mask & write_flags);
         if (last_state.layout == dst_layout && last_state.access_mask == dst_mask && !is_write) {
+            last_state.pl_stage |= dst_stage;
             return;
         }
 
@@ -880,7 +888,7 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
 
     last_state.layout = dst_layout;
     last_state.access_mask = dst_mask;
-    last_state.pl_stage = dst_stage;
+    last_state.pl_stage = merged_stages;
 }
 
 void Image::GrowLayers(const ImageInfo& grown) {

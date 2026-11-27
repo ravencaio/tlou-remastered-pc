@@ -1,6 +1,8 @@
 /* Minimal x86-64 native loader experiment. Not a PS4 emulator or game port. */
 #define _GNU_SOURCE
 #include <stdint.h>
+#include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -902,6 +904,305 @@ static int install_jump(uint64_t at, unsigned length, unsigned char *stub) {
     return 1;
 }
 
+/* The persistent Molotov point light uses a fixed linear RGB ratio while its
+ * intensity flickers. Its pool of fire has a larger radius than the flame on
+ * the bottle. Burning barrels use a separate flickering point light above
+ * the rim and a short-range fill inside the barrel. */
+static int trace_fire_shadow_selection;
+static int trace_dynamic_barrels_only;
+static int anchor_views_installed;
+static _Atomic uint32_t fire_shadow_atlas_assignments;
+
+static int is_barrel_palette(const float color[3]) {
+    return color[0] > 0.0f && color[2] == 0.0f &&
+           color[1] >= color[0] * 0.49f && color[1] <= color[0] * 0.65f;
+}
+
+/* A barrel's enlarged point light can reach the view after the original
+ * emitter has been culled. Let the point-light builder test the new bounds. */
+static ABI int barrel_needs_view_test(const unsigned char *source) {
+    if (!gow3gpu_pc_setting(GOW3_PC_FIRE_SHADOWS) || source[0x10d] != 1) return 0;
+    float color[3], radius;
+    memcpy(color, source + 0xc8, sizeof(color));
+    memcpy(&radius, source + 0xc4, sizeof(radius));
+    return radius >= 0.8f && is_barrel_palette(color);
+}
+
+static int install_barrel_view_test(unsigned char *stub, Segment *segments, uint64_t count) {
+    const uint64_t at = 0xA97020;
+    static const unsigned char original[] = {0x41,0x8b,0x47,0x0c,0x44,0x0f,0xa3,0xe8,0x73,0x34};
+    if (!mapped(segments, count, at, sizeof(original)) ||
+        memcmp(image + at, original, sizeof(original))) return 0;
+
+    static const unsigned char code[] = {
+        0x41,0x8b,0x47,0x0c, 0x44,0x0f,0xa3,0xe8, /* original view mask */
+        0x72,0x17,                               /* jc submit */
+        0x56, 0x48,0x83,0xec,0x08,              /* save rsi, align stack */
+        0x4c,0x89,0xff,                         /* mov rdi, r15 */
+        0x48,0xb8,0,0,0,0,0,0,0,0,             /* movabs rax, classifier */
+        0xff,0xd0,                               /* call rax */
+        0x48,0x83,0xc4,0x08, 0x5e,              /* restore stack and rsi */
+        0x85,0xc0, 0x74,0x0e,                  /* test eax, eax; jz skip */
+        0xff,0x25,0,0,0,0, 0,0,0,0,0,0,0,0,    /* submit */
+        0xff,0x25,0,0,0,0, 0,0,0,0,0,0,0,0,    /* skip */
+    };
+    const uintptr_t classify = (uintptr_t)barrel_needs_view_test;
+    const uintptr_t submit = (uintptr_t)(image + at + sizeof(original));
+    const uintptr_t skip = (uintptr_t)(image + 0xA9705E);
+    memcpy(stub, code, sizeof(code));
+    /* The original mask's taken path goes directly to the submit relay. */
+    stub[9] = 0x1d;
+    memcpy(stub + 20, &classify, sizeof(classify));
+    memcpy(stub + 45, &submit, sizeof(submit));
+    memcpy(stub + 59, &skip, sizeof(skip));
+    return install_jump(at, sizeof(original), stub);
+}
+
+static void configure_lantern_shadow(unsigned char *point, uint32_t flags) {
+    static const float color[] = {7.5f, 7.2894f, 4.9725f};
+    static const float radius_and_intensity[] = {4.5f, 0.60f};
+    static const float shadow_clip[] = {0.0f, 0.0f};
+    static const float shadow_fade[] = {16.0f, 24.0f};
+    flags |= UINT32_C(0x203);
+    memcpy(point + 0x10, color, sizeof(color));
+    memcpy(point + 0x30, radius_and_intensity, sizeof(radius_and_intensity));
+    memcpy(point + 0x3c, &flags, sizeof(flags));
+    memcpy(point + 0x44, shadow_clip, sizeof(shadow_clip));
+    memcpy(point + 0x54, shadow_fade, sizeof(shadow_fade));
+}
+
+/* Exterior emitter positions measured in the nighttime escape scene. */
+static const float escape_barrel_emitters[][3] = {
+    {-300.644f, 0.093f, 270.697f},
+    {-299.792f, 0.093f, 263.561f},
+    {-273.310f, 0.207f, 271.983f},
+    {-253.963f, 0.201f, 279.681f},
+};
+
+static int is_escape_barrel_emitter(const float origin[4]) {
+    for (unsigned i = 0; i < sizeof(escape_barrel_emitters) / sizeof(*escape_barrel_emitters); ++i) {
+        const float *known = escape_barrel_emitters[i];
+        if (fabsf(origin[0] - known[0]) < 0.03f && fabsf(origin[1] - known[1]) < 0.03f &&
+            fabsf(origin[2] - known[2]) < 0.03f) return 1;
+    }
+    return 0;
+}
+
+/* Gather live barrel emitters while the scene builds its light list.
+ * Keep nearby emitters across camera turns, even when the game's smaller
+ * authored volume temporarily stops contributing to the view. */
+static _Thread_local struct {
+    float positions[64][3];
+    unsigned count;
+} nearby_barrels;
+
+static float light_distance_squared(const float a[3], const float b[3]) {
+    const float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+    return dx * dx + dy * dy + dz * dz;
+}
+
+static int register_barrel_for_view(const float origin[4]) {
+    if (!anchor_views_installed) return 0;
+    if (!trace_dynamic_barrels_only && is_escape_barrel_emitter(origin)) return 1;
+    for (unsigned i = 0; i < nearby_barrels.count; ++i) {
+        if (light_distance_squared(nearby_barrels.positions[i], origin) < 0.03f * 0.03f) return 1;
+    }
+    if (nearby_barrels.count == sizeof(nearby_barrels.positions) / sizeof(*nearby_barrels.positions)) {
+        return 0;
+    }
+    memcpy(nearby_barrels.positions[nearby_barrels.count++], origin, 3 * sizeof(float));
+    return 1;
+}
+
+static ABI void submit_fire_point_light(void *lights, void *view, const unsigned char *point, int mask) {
+    typedef void (ABI *SubmitPointLight)(void *, void *, const unsigned char *, int);
+    SubmitPointLight submit = (SubmitPointLight)(image + 0xA638B0);
+    if (gow3gpu_pc_setting(GOW3_PC_FIRE_SHADOWS)) {
+        float color[3], radius;
+        uint32_t flags;
+        memcpy(color, point + 0x10, sizeof(color));
+        memcpy(&radius, point + 0x30, sizeof(radius));
+        memcpy(&flags, point + 0x3c, sizeof(flags));
+        const uint32_t light_type = flags & UINT32_C(0x00ffffff);
+        /* The upper flag byte can change while the same emitter stays active. */
+        /* The thrown bottle stays below a one-metre radius in the trace. Leave
+         * room for the fire pool's radius and normalized color to vary. */
+        const int molotov = light_type == 3 && radius > 1.5f && color[0] > 0.0f &&
+            fabsf(color[1] - color[0] * 0.55068f) < color[0] * 0.003f &&
+            fabsf(color[2] - color[0] * 0.3260f) < color[0] * 0.003f;
+        /* The barrel's exterior light has no blue channel. */
+        const int barrel_palette = is_barrel_palette(color);
+        const int barrel = barrel_palette && light_type == 1 && radius >= 0.8f;
+        const int barrel_fill = barrel_palette && light_type == 3 &&
+            radius >= 0.30f && radius <= 0.55f;
+        /* Tommy's Dam uses two authored palettes for the same kerosene prop. */
+        const int kerosene_lantern = light_type == 1 && radius == 2.0f &&
+            ((fabsf(color[0] - 1.3f) < 0.0001f && fabsf(color[1] - 0.8717f) < 0.0001f &&
+              fabsf(color[2] - 0.4f) < 0.0001f) ||
+             (fabsf(color[0] - 1.0f) < 0.0001f && fabsf(color[1] - 0.758f) < 0.0001f &&
+              fabsf(color[2] - 0.5f) < 0.0001f));
+        const int promote = molotov || barrel || kerosene_lantern;
+        if (trace_fire_shadow_selection && color[0] > 0.0f &&
+            color[1] > color[0] * 0.3f && color[1] < color[0] * 0.99f &&
+            color[2] < color[0] * 0.78f) {
+            float position[3];
+            memcpy(position, point, sizeof(position));
+            fprintf(stderr, "FireShadow input selected=%d flags=%08x view=%p mask=%x pos=%.3f %.3f %.3f rgb=%.6f %.6f %.6f radius=%.4f atlas=%u\n",
+                    promote, flags, view, (unsigned)mask, position[0], position[1], position[2],
+                    color[0], color[1], color[2], radius,
+                    atomic_load_explicit(&fire_shadow_atlas_assignments, memory_order_relaxed));
+        }
+        if (promote || barrel_fill) {
+            _Alignas(16) unsigned char adjusted[0xa0];
+            memcpy(adjusted, point, sizeof(adjusted));
+            if (barrel_fill) {
+                /* The unshadowed glow can wash out the exterior light's
+                 * shadows around the rim. Keep a small glow for the embers. */
+                float intensity;
+                memcpy(&intensity, point + 0x34, sizeof(intensity));
+                intensity *= 0.25f;
+                memcpy(adjusted + 0x34, &intensity, sizeof(intensity));
+                submit(lights, view, adjusted, mask);
+                return;
+            }
+            if (barrel) {
+                /* Use the barrel emitter's world position with the same
+                 * descriptor as a static oil lamp. The authored emitter's
+                 * auxiliary visibility data describes its much smaller light. */
+                float origin[4];
+                memcpy(origin, point, sizeof(origin));
+                /* These scene lights are inserted in the per-view list below. */
+                if (register_barrel_for_view(origin)) return;
+                origin[1] += 0.45f;
+                memset(adjusted, 0, sizeof(adjusted));
+                memcpy(adjusted, origin, sizeof(origin));
+                configure_lantern_shadow(adjusted, 0);
+                submit(lights, view, adjusted, mask);
+                return;
+            }
+            if (kerosene_lantern) {
+                configure_lantern_shadow(adjusted, flags);
+                submit(lights, view, adjusted, mask);
+                return;
+            }
+            /* Use a fixed view-distance fade for the shadow map. */
+            const float shadow_fade[2] = {16.0f, 24.0f};
+            memcpy(adjusted + 0x54, shadow_fade, sizeof(shadow_fade));
+            flags |= UINT32_C(0x200); /* The point-light builder's omnidirectional shadow mode. */
+            memcpy(adjusted + 0x3c, &flags, sizeof(flags));
+            submit(lights, view, adjusted, mask);
+            return;
+        }
+    }
+    submit(lights, view, point, mask);
+}
+
+static ABI void *submit_anchored_shadows_for_view(void *view) {
+    typedef void *(ABI *GetLights)(void *);
+    typedef const unsigned char *(ABI *GetView)(void *);
+    typedef void (ABI *SubmitPointLight)(void *, void *, const unsigned char *, int);
+    void *lights = ((GetLights)(image + 0xABB420))(view);
+    if (!lights || !gow3gpu_pc_setting(GOW3_PC_FIRE_SHADOWS)) {
+        nearby_barrels.count = 0;
+        return lights;
+    }
+
+    static const float placements[][3] = {
+        {-228.74730f, 10.61145f, 100.39883f},
+        {-144.90437f, 18.40289f, 14.48217f},
+        {-14.77375f, 14.00229f, 135.57812f},
+        {-14.76446f, 14.00497f, 147.36974f},
+        {-14.60017f, 14.00497f, 159.20061f},
+        {-14.13782f, 14.00100f, 108.41077f},
+        /* Tommy's Dam kerosene placements without a matching authored point light.
+         * The live emitters at the other lanterns are handled by the classifier. */
+        {-3.89210f,  6.31069f,  -4.48367f}, /* pump room, lantern 5 */
+        {-74.06360f, 4.62890f, -27.98560f}, /* turbine hall, lantern 8 */
+        {-3.99498f, 14.24042f, 103.55309f},
+        {12.35914f, 14.00100f, 97.76421f},
+        {15.77726f, 14.00562f, 102.62310f},
+        {17.22167f, 14.00562f, 100.24822f},
+        {53.16716f, 13.53120f, 231.87029f},
+    };
+    const unsigned char *camera = ((GetView)(image + 0xABB180))(view);
+    float eye[3];
+    memcpy(eye, camera + 0x230, sizeof(eye));
+    SubmitPointLight submit = (SubmitPointLight)(image + 0xA638B0);
+    /* Drop positions from streamed-out areas. A camera turn without
+     * translation keeps its nearby lights in the same list. */
+    unsigned kept = 0;
+    for (unsigned i = 0; i < nearby_barrels.count; ++i) {
+        if (light_distance_squared(nearby_barrels.positions[i], eye) < 32.0f * 32.0f) {
+            if (kept != i) memcpy(nearby_barrels.positions[kept], nearby_barrels.positions[i],
+                                  sizeof(nearby_barrels.positions[0]));
+            ++kept;
+        }
+    }
+    nearby_barrels.count = kept;
+    const struct {
+        const float (*positions)[3];
+        unsigned count;
+        float height;
+    } groups[] = {
+        {placements, sizeof(placements) / sizeof(*placements), 0.22f},
+        {escape_barrel_emitters, trace_dynamic_barrels_only ? 0 : sizeof(escape_barrel_emitters) / sizeof(*escape_barrel_emitters), 0.45f},
+        {nearby_barrels.positions, nearby_barrels.count, 0.45f},
+    };
+    for (unsigned group = 0; group < sizeof(groups) / sizeof(*groups); ++group) {
+        for (unsigned i = 0; i < groups[group].count; ++i) {
+            const float *position = groups[group].positions[i];
+            if (light_distance_squared(position, eye) >= 24.0f * 24.0f) continue;
+            _Alignas(16) unsigned char point[0xa0] = {0};
+            const float origin[] = {position[0], position[1] + groups[group].height, position[2], 1.0f};
+            memcpy(point, origin, sizeof(origin));
+            configure_lantern_shadow(point, 0);
+            uint32_t before = 0, after;
+            if (group != 0 && trace_fire_shadow_selection) memcpy(&before, lights, sizeof(before));
+            submit(lights, view, point, 0);
+            if (group != 0 && trace_fire_shadow_selection) {
+                memcpy(&after, lights, sizeof(after));
+                fprintf(stderr, "Barrel anchor %u:%u lights=%u->%u eye=%.2f %.2f %.2f\n",
+                        group, i + 1, before, after, eye[0], eye[1], eye[2]);
+            }
+        }
+    }
+    return lights;
+}
+
+static ABI void submit_workbench_spotlight(void *lights, void *view,
+                                           const unsigned char *spot, int mask) {
+    typedef void (ABI *SubmitSpotlight)(void *, void *, const unsigned char *, int);
+    SubmitSpotlight submit = (SubmitSpotlight)(image + 0xA63FF0);
+    if (gow3gpu_pc_setting(GOW3_PC_FIRE_SHADOWS)) {
+        float color[3], projector[5];
+        uint32_t flags;
+        memcpy(color, spot + 0x10, sizeof(color));
+        memcpy(projector, spot + 0x40, sizeof(projector));
+        memcpy(&flags, spot + 0x54, sizeof(flags));
+        const int workbench = (flags & UINT32_C(0x00ffffff)) == 1 &&
+            fabsf(color[0] - 7.5f) < 0.001f && fabsf(color[1] - 7.289377f) < 0.001f &&
+            fabsf(color[2] - 4.9725f) < 0.001f && fabsf(projector[0] - 1.5f) < 0.001f &&
+            fabsf(projector[3] - 1.04720f) < 0.001f && fabsf(projector[4] - 0.01745f) < 0.001f;
+        if (workbench) {
+            _Alignas(16) unsigned char adjusted[0xc0];
+            memcpy(adjusted, spot, sizeof(adjusted));
+            const float range = 2.6f;
+            const float intensity = projector[1] * 2.05f;
+            const float maximum_clip = 0.0f;
+            const float fade[] = {16.0f, 24.0f, 16.0f, 24.0f};
+            flags |= UINT32_C(0x100);
+            memcpy(adjusted + 0x40, &range, sizeof(range));
+            memcpy(adjusted + 0x44, &intensity, sizeof(intensity));
+            memcpy(adjusted + 0x54, &flags, sizeof(flags));
+            memcpy(adjusted + 0x60, &maximum_clip, sizeof(maximum_clip));
+            memcpy(adjusted + 0x6c, fade, sizeof(fade));
+            submit(lights, view, adjusted, mask);
+            return;
+        }
+    }
+    submit(lights, view, spot, mask);
+}
+
 /* A page for hook stubs within relative-jump range of the image (the image sits below 2 GiB with
  * --low-image; a page anywhere may be out of range). */
 static unsigned char *allocate_near_image(uint64_t size) {
@@ -1120,7 +1421,7 @@ static void install_menu_exit(Segment *segments, uint64_t count, uint64_t size) 
      * table is copied, ~14 KiB per menu data load), 32 slots of 32 KiB reused per load address
      * (src/runtime_menu_exit.c). */
     enum { CLICK_STUB = 512, TEXT_STUB = 1024, OPTION_STUB = 1536, UPDATE_STUB = 2048, COMMENTARY_STUB = 3072,
-           ARENA_PAGES = 256 };
+           FIRE_SHADOW_STUB = 2560, FIRE_ATLAS_STUB = 2816, ARENA_PAGES = 256 };
     uint64_t update_at = UINT64_MAX, commentary_at = UINT64_MAX;
     unsigned char *stubs = allocate_near_image(size);
     unsigned char *arena = allocate(page_size * ARENA_PAGES);
@@ -1171,6 +1472,89 @@ static void install_menu_exit(Segment *segments, uint64_t count, uint64_t size) 
         } else {
             commentary_at = UINT64_MAX;
         }
+    }
+    static const unsigned char original_point_call[] = {0xe8, 0xc7, 0x02, 0x00, 0x00};
+    const uint64_t point_call = 0xA635E4;
+    const char *trace_selection = getenv("TLOU_TRACE_FIRE_SHADOW_SELECTION");
+    trace_fire_shadow_selection = trace_selection && strcmp(trace_selection, "1") == 0;
+    const char *dynamic_trace = getenv("TLOU_TRACE_DYNAMIC_BARRELS_ONLY");
+    trace_dynamic_barrels_only = trace_fire_shadow_selection && dynamic_trace && !strcmp(dynamic_trace, "1");
+    /* Count actual omni atlas assignments before the renderer's optional
+     * logging branch. The retail log channel is unavailable in this build. */
+    const char *trace_atlas = getenv("TLOU_TRACE_FIRE_SHADOW_ATLAS");
+    const uint64_t atlas_assign_at = 0xA90084;
+    static const unsigned char atlas_assign[] = {0x45, 0x88, 0x4f, 0x62, 0x41, 0xff, 0xc1};
+    if (trace_fire_shadow_selection && trace_atlas && !strcmp(trace_atlas, "1") &&
+        mapped(segments, count, atlas_assign_at, sizeof(atlas_assign)) &&
+        !memcmp(image + atlas_assign_at, atlas_assign, sizeof(atlas_assign))) {
+        unsigned char *stub = stubs + FIRE_ATLAS_STUB;
+        unsigned char thunk[] = {
+            0x50,                         /* push rax */
+            0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, /* movabs rax, counter */
+            0xf0, 0xff, 0x00,             /* lock inc dword ptr [rax] */
+            0x58,                         /* pop rax */
+            0x45, 0x88, 0x4f, 0x62, 0x41, 0xff, 0xc1, /* displaced assignment and increment */
+            0xe9, 0, 0, 0, 0,            /* resume the retail code */
+        };
+        const uintptr_t counter = (uintptr_t)&fire_shadow_atlas_assignments;
+        const int64_t relative = (int64_t)(uintptr_t)(image + atlas_assign_at + sizeof(atlas_assign)) -
+                                 (int64_t)(uintptr_t)(stub + sizeof(thunk));
+        if (relative >= INT32_MIN && relative <= INT32_MAX) {
+            const int32_t displacement = (int32_t)relative;
+            memcpy(thunk + 3, &counter, sizeof(counter));
+            memcpy(thunk + sizeof(thunk) - sizeof(displacement), &displacement, sizeof(displacement));
+            memcpy(stub, thunk, sizeof(thunk));
+            if (install_jump(atlas_assign_at, sizeof(atlas_assign), stub))
+                puts("FireShadow: omni atlas assignment counter installed");
+        }
+    }
+    if (options &&
+        mapped(segments, count, point_call, sizeof(original_point_call)) &&
+        mapped(segments, count, 0xA638B0, 1) &&
+        !memcmp(image + point_call, original_point_call, sizeof(original_point_call))) {
+        unsigned char *stub = stubs + FIRE_SHADOW_STUB;
+        const uint64_t target = (uintptr_t)submit_fire_point_light;
+        stub[0] = 0x48;
+        stub[1] = 0xb8;
+        memcpy(stub + 2, &target, sizeof(target));
+        stub[10] = 0xff;
+        stub[11] = 0xe0;
+        if (install_jump(point_call, sizeof(original_point_call), stub)) {
+            image[point_call] = 0xe8;
+            puts("TLOU_FIRE_SHADOWS_V6");
+        }
+    }
+
+    /* Add the oil lamps before the light-list bounds are copied. The
+     * workbench hook replaces only the authored spotlight submission. */
+    const struct {
+        uint64_t call, original;
+        uintptr_t replacement;
+    } extra_lights[] = {
+        {0xA970C6, 0xABB420, (uintptr_t)submit_anchored_shadows_for_view},
+        {0xA63897, 0xA63FF0, (uintptr_t)submit_workbench_spotlight},
+    };
+    for (unsigned i = 0; options && i < sizeof(extra_lights) / sizeof(*extra_lights); ++i) {
+        const uint64_t at = extra_lights[i].call;
+        const int32_t delta = (int32_t)((int64_t)extra_lights[i].original - (int64_t)(at + 5));
+        unsigned char expected[5] = {0xe8};
+        memcpy(expected + 1, &delta, sizeof(delta));
+        if (!mapped(segments, count, at, sizeof(expected)) ||
+            !mapped(segments, count, extra_lights[i].original, 1) ||
+            memcmp(image + at, expected, sizeof(expected))) continue;
+        unsigned char *stub = stubs + FIRE_SHADOW_STUB + 16 * (i + 1);
+        stub[0] = 0x48;
+        stub[1] = 0xb8;
+        memcpy(stub + 2, &extra_lights[i].replacement, sizeof(uintptr_t));
+        stub[10] = 0xff;
+        stub[11] = 0xe0;
+        if (install_jump(at, sizeof(expected), stub)) {
+            image[at] = 0xe8;
+            if (i == 0) anchor_views_installed = 1;
+        }
+    }
+    if (options && install_barrel_view_test(stubs + FIRE_SHADOW_STUB + 64, segments, count)) {
+        puts("TLOU_BARREL_SHADOW_VIEW_BOUNDS");
     }
     protect(stubs, page_size, 5);
     runtime_menu_exit_set_arena(arena, page_size * ARENA_PAGES);

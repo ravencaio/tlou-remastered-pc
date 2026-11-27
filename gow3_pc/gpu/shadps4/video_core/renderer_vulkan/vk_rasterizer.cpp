@@ -3150,6 +3150,15 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     if (needs_barrier) {
         runtime.FlushBarriers();
     }
+    // A later dispatch may reuse the arguments while an indirect draw still reads them.
+    runtime.AccessBuffer(buffer, base, stride * max_count, vk::PipelineStageFlagBits2::eDrawIndirect,
+                         vk::AccessFlagBits2::eIndirectCommandRead);
+    if (count_address != 0) {
+        runtime.AccessBuffer(count_buffer, count_offset, sizeof(u32),
+                             vk::PipelineStageFlagBits2::eDrawIndirect,
+                             vk::AccessFlagBits2::eIndirectCommandRead);
+    }
+
     // GOW3_VOL_TRACE=1 (diagnostics): the GPU-written arguments of the volumetric light
     // resolves' indirect draws (BufferCache::PollPeeks prints them), GOW3_VOL_TRACE_AFTER ms
     // after the first indirect draw on.
@@ -7004,8 +7013,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     for (u32 binding_index = 0; binding_index < image_bindings.size(); ++binding_index) {
         auto& [image_id, desc_ptr] = image_bindings[binding_index];
         auto* memo_entry = image_binding_entries[binding_index];
-        const auto& desc = *desc_ptr;
-        bool is_storage = desc.type == VideoCore::TextureCache::BindingType::Storage;
+        const bool is_storage = desc_ptr->type == VideoCore::TextureCache::BindingType::Storage;
         if (is_storage && image_id) {
             u64 lo, hi;
             if (Gow3WatchRange::Range(lo, hi)) {
@@ -7020,13 +7028,14 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             if (auto& old_image = texture_cache.GetImage(image_id);
                 old_image.binding.needs_rebind) {
                 old_image.binding = {};
-                auto& rebind_desc = image_desc_storage.emplace_back(desc);
+                auto& rebind_desc = image_desc_storage.emplace_back(*desc_ptr);
                 desc_ptr = &rebind_desc;
                 image_id = texture_cache.FindImage(rebind_desc);
                 memo_entry = nullptr;
                 set_ok = false;
             }
 
+            const auto& desc = *desc_ptr;
             bound_images.emplace_back(image_id);
 
             auto& image = texture_cache.GetImage(image_id);

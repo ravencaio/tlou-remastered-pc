@@ -164,6 +164,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.reactive_max = Clamp(f, 0.0f, 1.0f);
     } else if (key == "debug_view") {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
+    } else if (key == "fire_shadows") {
+        v.fire_shadows = i == 1;
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
     } else if (key == "display_mode") {
@@ -456,6 +458,7 @@ KeyValues Current() {
                  v.reactive_scale.load(), v.reactive_threshold.load(), v.reactive_max.load(),
                  v.debug_view.load(), int(v.show_fps.load()),
                  int(v.fsr4_auto_exposure.load()), int(v.fsr4_invert_jitter.load()));
+    Append(text, "fire_shadows=%d\n", v.fire_shadows.load());
     if (!v.output_res_text.empty() && std::getenv("GOW3_GAME_RESOLUTION")) {
         Append(text, "output_res=%s\n", v.output_res_text.c_str());
     } else {
@@ -675,6 +678,7 @@ extern "C" int gow3gpu_pc_setting(int setting) {
     case GOW3_PC_FPS_LIMIT: return std::max(0, G::IndexOf(G::FpsLimits, s.fps_limit.load(), int(G::FpsLimits.size()) - 1));
     case GOW3_PC_ANTI_ALIASING: return AntiAliasingIndex();
     case GOW3_PC_SHARPENING: return s.rcas_strength;
+    case GOW3_PC_FIRE_SHADOWS: return s.fire_shadows.load();
     case GOW3_PC_PERF_OVERLAY: return s.show_fps ? 1 : 0;
     case GOW3_PC_MOUSE_SENS: return Percent(s.mouse_sens);
     case GOW3_PC_MOUSE_AIM_SENS: return Percent(s.mouse_aim_sens);
@@ -748,6 +752,7 @@ extern "C" void gow3gpu_pc_setting_set(int setting, int value) {
         break;
     }
     case GOW3_PC_SHARPENING: s.rcas_strength = std::clamp(value, 0, 100); break;
+    case GOW3_PC_FIRE_SHADOWS: s.fire_shadows = value == 1; break;
     case GOW3_PC_PERF_OVERLAY: s.show_fps = value != 0; break;
     case GOW3_PC_MOUSE_SENS: s.mouse_sens = std::clamp(value, 10, 500) / 100.0f; controls = true; break;
     case GOW3_PC_MOUSE_AIM_SENS: s.mouse_aim_sens = std::clamp(value, 10, 500) / 100.0f; controls = true; break;
