@@ -1,6 +1,7 @@
 /* Minimal x86-64 native loader experiment. Not a PS4 emulator or game port. */
 #define _GNU_SOURCE
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -902,6 +903,106 @@ static int install_jump(uint64_t at, unsigned length, unsigned char *stub) {
     return 1;
 }
 
+/* The primary runtime-light slot is Joel's flashlight. The top descriptor bit is unused
+ * by the spotlight builder and tags the copy made here for the volumetric view check. */
+static const uint32_t player_spotlight_flag = UINT32_C(0x00400000);
+static const uint32_t player_volumetric_tag = UINT32_C(0x80000000);
+
+static ABI void submit_player_spotlight(void *lights, void *view, const unsigned char *spot, int mask) {
+    typedef void (ABI *SubmitSpotlight)(void *, void *, const unsigned char *, int);
+    SubmitSpotlight submit = (SubmitSpotlight)(image + 0xA63FF0);
+    const int level = gow3gpu_pc_setting(GOW3_PC_VOLUMETRIC_FLASHLIGHT);
+    uint32_t flags;
+    memcpy(&flags, spot + 0x54, sizeof(flags));
+    if (level == 0 || !(flags & player_spotlight_flag)) {
+        submit(lights, view, spot, mask);
+        return;
+    }
+
+    _Alignas(16) unsigned char adjusted[0xC0];
+    float origin[3], direction[3], pullback, projector[5];
+    memcpy(adjusted, spot, sizeof(adjusted));
+    memcpy(origin, spot, sizeof(origin));
+    memcpy(direction, spot + 0x20, sizeof(direction));
+    memcpy(&pullback, image + 0x181AE94, sizeof(pullback));
+    memcpy(projector, spot + 0x40, sizeof(projector));
+    /* The volume pass uses the projector apex even when its near plane is set.
+     * Put the apex at the lens and compensate the projected radius at 3 m. */
+    for (unsigned i = 0; i < 3; ++i) origin[i] += direction[i] * pullback;
+    memcpy(adjusted, origin, sizeof(origin));
+    const float range = 20.0f;
+    const float radius_scale = 1.0f + pullback / 3.0f;
+    const float angles[] = {
+        2.0f * atanf(0.41421356f * radius_scale),
+        2.0f * atanf(0.26794919f * radius_scale),
+    };
+    /* The reduced projector profile scales the angles by 0.75, the power by 0.3
+     * and the RGB passed to the volume pass by 0.05. Preserve the native ramps. */
+    if (projector[0] - pullback > 14.99f && projector[0] - pullback < 15.01f &&
+        projector[3] > 0.5890f && projector[3] < 0.5891f &&
+        projector[4] > 0.3926f && projector[4] < 0.3928f) {
+        float power = projector[1] / 0.3f;
+        if (power > 1.0f) power = 1.0f;
+        memcpy(adjusted + 0x44, &power, sizeof(power));
+        float color[3];
+        static const float normal_color[] = {12.75f, 12.5f, 10.0f};
+        memcpy(color, spot + 0x10, sizeof(color));
+        for (unsigned i = 0; i < 3; ++i) {
+            color[i] *= 20.0f;
+            if (color[i] > normal_color[i]) color[i] = normal_color[i];
+        }
+        memcpy(adjusted + 0x10, color, sizeof(color));
+    }
+    memcpy(adjusted + 0x40, &range, sizeof(range));
+    memcpy(adjusted + 0x4C, angles, sizeof(angles));
+    flags |= player_volumetric_tag;
+    memcpy(adjusted + 0x54, &flags, sizeof(flags));
+    static const float densities[] = {0.0f, 0.0275f, 0.0605f, 0.11f};
+    /* Match the projected spotlight's full range and outer angle. */
+    const float cone[] = {1.0f, 1.0f, densities[level]};
+    memcpy(adjusted + 0xA0, cone, sizeof(cone));
+    submit(lights, view, adjusted, mask);
+}
+
+/* AddSpotLight gates density on the current view and multiplies it by the view's
+ * distance fade. Use the selected density directly for Joel's tagged projector. */
+static int install_player_volumetric_gate(unsigned char *stub, Segment *segments, uint64_t count) {
+    const uint64_t at = 0xA64997;
+    const uint64_t density_at = 0xA649A4, fade_at = 0xA649AC, resume_at = 0xA649B8;
+    const uint64_t threshold_at = 0x1164F8C;
+    static const unsigned char original[] = {
+        0x49,0x8b,0x4e,0x10, 0x80,0xb9,0x15,0x02,0x00,0x00,0x00, 0x74,0x08,
+        0xc5,0xfa,0x10,0x93,0xa8,0x00,0x00,0x00, /* load density */
+        0xc5,0xfa,0x10,0x1d,0xd8,0x05,0x70,0x00, /* load threshold */
+        0xc5,0xea,0x59,0xd5,                    /* multiply by fade */
+    };
+    if (!mapped(segments, count, at, sizeof(original)) ||
+        !mapped(segments, count, threshold_at, sizeof(float)) ||
+        memcmp(image + at, original, sizeof(original))) return 0;
+    static const unsigned char code[] = {
+        0x49,0x8b,0x4e,0x10,                       /* mov rcx, [r14+0x10] */
+        0xf6,0x43,0x57,0x80, 0x74,0x06,            /* test tag; jz original check */
+        0xf6,0x43,0x56,0x40, 0x75,0x25,            /* test primary slot; jnz fixed density */
+        0x80,0xb9,0x15,0x02,0x00,0x00,0x00,       /* cmp byte [rcx+0x215], 0 */
+        0x74,0x0e,                                 /* je skip density */
+        0xff,0x25,0,0,0,0, 0,0,0,0,0,0,0,0,      /* jmp to the density load */
+        0xff,0x25,0,0,0,0, 0,0,0,0,0,0,0,0,      /* jmp past the load */
+        0xc5,0xfa,0x10,0x93,0xa8,0,0,0,           /* vmovss xmm2, [rbx+0xa8] */
+        0xc5,0xfa,0x10,0x1d,0x0e,0,0,0,           /* vmovss xmm3, [rip+14] */
+        0xff,0x25,0,0,0,0, 0,0,0,0,0,0,0,0,      /* jmp past the fade */
+        0,0,0,0,                                  /* threshold */
+    };
+    const uint64_t load = (uintptr_t)(image + density_at);
+    const uint64_t fade = (uintptr_t)(image + fade_at);
+    const uint64_t resume = (uintptr_t)(image + resume_at);
+    memcpy(stub, code, sizeof(code));
+    memcpy(stub + 31, &load, sizeof(load));
+    memcpy(stub + 45, &fade, sizeof(fade));
+    memcpy(stub + 75, &resume, sizeof(resume));
+    memcpy(stub + 83, image + threshold_at, sizeof(float));
+    return install_jump(at, (unsigned)(density_at - at), stub);
+}
+
 /* A page for hook stubs within relative-jump range of the image (the image sits below 2 GiB with
  * --low-image; a page anywhere may be out of range). */
 static unsigned char *allocate_near_image(uint64_t size) {
@@ -1120,7 +1221,7 @@ static void install_menu_exit(Segment *segments, uint64_t count, uint64_t size) 
      * table is copied, ~14 KiB per menu data load), 32 slots of 32 KiB reused per load address
      * (src/runtime_menu_exit.c). */
     enum { CLICK_STUB = 512, TEXT_STUB = 1024, OPTION_STUB = 1536, UPDATE_STUB = 2048, COMMENTARY_STUB = 3072,
-           ARENA_PAGES = 256 };
+           FLASHLIGHT_STUB = 2560, FLASHLIGHT_GATE_STUB = 3584, ARENA_PAGES = 256 };
     uint64_t update_at = UINT64_MAX, commentary_at = UINT64_MAX;
     unsigned char *stubs = allocate_near_image(size);
     unsigned char *arena = allocate(page_size * ARENA_PAGES);
@@ -1170,6 +1271,23 @@ static void install_menu_exit(Segment *segments, uint64_t count, uint64_t size) 
                                             image + commentary_at);
         } else {
             commentary_at = UINT64_MAX;
+        }
+    }
+    const uint64_t spotlight_call = 0x32242;
+    static const unsigned char original_spotlight_call[] = {0xe8,0xa9,0x1d,0xa3,0x00};
+    if (options && mapped(segments, count, spotlight_call, sizeof(original_spotlight_call)) &&
+        mapped(segments, count, 0xA63FF0, 1) && mapped(segments, count, 0x181AE94, sizeof(float)) &&
+        !memcmp(image + spotlight_call, original_spotlight_call, sizeof(original_spotlight_call))) {
+        unsigned char *stub = stubs + FLASHLIGHT_STUB;
+        const uint64_t target = (uintptr_t)submit_player_spotlight;
+        stub[0] = 0x48; stub[1] = 0xb8; /* movabs rax, target */
+        memcpy(stub + 2, &target, sizeof(target));
+        stub[10] = 0xff; stub[11] = 0xe0; /* jmp rax, keeping the CALL's return address */
+        if (install_jump(spotlight_call, sizeof(original_spotlight_call), stub)) {
+            image[spotlight_call] = 0xe8;
+            puts("TLOU_FLASHLIGHT_MENU_V1");
+            if (install_player_volumetric_gate(stubs + FLASHLIGHT_GATE_STUB, segments, count))
+                puts("Joel flashlight: standard cone and selected density; reduced projector RGB compensated");
         }
     }
     protect(stubs, page_size, 5);

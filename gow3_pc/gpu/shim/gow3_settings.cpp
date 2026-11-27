@@ -164,6 +164,11 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.reactive_max = Clamp(f, 0.0f, 1.0f);
     } else if (key == "debug_view") {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
+    } else if (key == "volumetric_flashlight_level") {
+        v.volumetric_flashlight_level = std::clamp(i, 0, 3);
+    } else if (key == "volumetric_flashlight") {
+        int unset = -1;
+        v.volumetric_flashlight_level.compare_exchange_strong(unset, i == 1 ? 3 : 0);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
     } else if (key == "display_mode") {
@@ -501,6 +506,7 @@ KeyValues Current() {
         text += "pad_map=" + v.pad_map + "\nkey_map=" + v.key_map + "\nmouse_map=" + v.mouse_map + "\n";
         text += "menu_pad=" + v.menu_pad + "\nmenu_key=" + v.menu_key + "\n";
     }
+    Append(text, "volumetric_flashlight_level=%d\n", std::max(0, v.volumetric_flashlight_level.load()));
     KeyValues values;
     for (size_t at = 0; at < text.size();) {
         const size_t line_end = text.find('\n', at);
@@ -675,6 +681,7 @@ extern "C" int gow3gpu_pc_setting(int setting) {
     case GOW3_PC_FPS_LIMIT: return std::max(0, G::IndexOf(G::FpsLimits, s.fps_limit.load(), int(G::FpsLimits.size()) - 1));
     case GOW3_PC_ANTI_ALIASING: return AntiAliasingIndex();
     case GOW3_PC_SHARPENING: return s.rcas_strength;
+    case GOW3_PC_VOLUMETRIC_FLASHLIGHT: return std::max(0, s.volumetric_flashlight_level.load());
     case GOW3_PC_PERF_OVERLAY: return s.show_fps ? 1 : 0;
     case GOW3_PC_MOUSE_SENS: return Percent(s.mouse_sens);
     case GOW3_PC_MOUSE_AIM_SENS: return Percent(s.mouse_aim_sens);
@@ -700,6 +707,7 @@ extern "C" int gow3gpu_pc_setting_count(int setting) {
         return AntiAliasingChoices(choices);
     }
     case GOW3_PC_ANISOTROPIC_FILTER: return 5; // Off, 2x, 4x, 8x, 16x
+    case GOW3_PC_VOLUMETRIC_FLASHLIGHT: return 4;
     default: return 2;
     }
 }
@@ -748,6 +756,7 @@ extern "C" void gow3gpu_pc_setting_set(int setting, int value) {
         break;
     }
     case GOW3_PC_SHARPENING: s.rcas_strength = std::clamp(value, 0, 100); break;
+    case GOW3_PC_VOLUMETRIC_FLASHLIGHT: s.volumetric_flashlight_level = std::clamp(value, 0, 3); break;
     case GOW3_PC_PERF_OVERLAY: s.show_fps = value != 0; break;
     case GOW3_PC_MOUSE_SENS: s.mouse_sens = std::clamp(value, 10, 500) / 100.0f; controls = true; break;
     case GOW3_PC_MOUSE_AIM_SENS: s.mouse_aim_sens = std::clamp(value, 10, 500) / 100.0f; controls = true; break;
