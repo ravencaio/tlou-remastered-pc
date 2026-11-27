@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import random
+import struct
 import subprocess
 import sys
 import threading
@@ -2155,6 +2156,37 @@ def tool(name):
         sys.path.pop(0)
 
 
+def sfo_values(path):
+    """The entries of a param.sfo (strings and integers); tools/install_update.py's reader, kept here
+    because the release package does not ship that tool."""
+    data = Path(path).read_bytes()
+    magic, _, keys, values, count = struct.unpack_from("<IIIII", data)
+    if magic != 0x46535000:
+        raise ValueError("not a param.sfo")
+    found = {}
+    for i in range(count):
+        key_at, kind, length, _, value_at = struct.unpack_from("<HHIII", data, 20 + i * 16)
+        key = data[keys + key_at:data.index(bytes(1), keys + key_at)].decode("ascii", "replace")
+        raw = data[values + value_at:values + value_at + length]
+        found[key] = struct.unpack("<I", raw[:4])[0] if kind == 0x0404 else             raw.rstrip(bytes(1)).decode("utf-8", "replace")
+    return found
+
+
+def base_executable(eboot):
+    """True when `eboot` is version 1.00's executable: it imports sceRemoteplayGetConnectionStatus
+    (NID g3PNjYKWqnQ), which 1.11's no longer does (tools/probe_tlou.py base_executable)."""
+    try:
+        with open(eboot, "rb") as f:
+            tail = b""
+            while chunk := f.read(1 << 22):
+                if b"g3PNjYKWqnQ" in tail + chunk:
+                    return True
+                tail = chunk[-10:]
+    except OSError:
+        pass
+    return False
+
+
 def check_update_folder(folder, game):
     """(update folder, None) when `folder` (or its uroot) holds update 1.11 of the game in `game`,
     else (None, (text key, values))."""
@@ -2166,7 +2198,6 @@ def check_update_folder(folder, game):
     try:
         if root.resolve() == Path(game).resolve():
             return None, ("update_is_game",)
-        sfo_values = tool("install_update").sfo_values
         update = sfo_values(root / "sce_sys/param.sfo")
         base = sfo_values(Path(game) / "sce_sys/param.sfo") if (Path(game) / "sce_sys/param.sfo").is_file() else {}
     except Exception:
@@ -2192,12 +2223,8 @@ def game_has_update(folders):
     folder next to it holds update 1.11 of this game."""
     game = game_folder(folders)
     eboot = game / "eboot.bin"
-    if eboot.is_file():
-        try:
-            if not tool("probe_tlou").base_executable(eboot):
-                return True
-        except Exception:
-            pass
+    if eboot.is_file() and not base_executable(eboot):
+        return True
     update = found_update(game)
     return update is not None and check_update_folder(update, game)[1] is None
 
