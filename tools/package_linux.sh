@@ -57,8 +57,14 @@ chmod 755 "$stage/gow3_pc/out/gow3-probe"
 # system's libstdc++ stays the one its Vulkan driver needs (libgcc_s, always there, too).
 system_lib='^(linux-vdso|ld-linux[a-z0-9-]*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libmvec|libgcc_s|libGL|libEGL|libGLX|libGLdispatch|libOpenGL|libgbm|libdrm[a-z_]*|libwayland-[a-z]*|libxkbcommon[a-z0-9-]*|libdecor-[0-9]*|libasound|libpulse[a-z-]*|libpipewire-[0-9.]*|libjack|libudev|libdbus-1)\.so'
 mkdir -p "$stage/gow3_pc/out/lib"
+# Where the build found its libraries outside the loader's paths (tools/build_ffmpeg_min.sh's
+# prefix): searched to copy them, never in the checks below.
+build_dirs=
+for module in libavcodec sdl3; do
+    build_dirs+=$(pkg-config --variable=libdir "$module" 2>/dev/null || true):
+done
 for elf in "$stage/gow3_pc/out/gow3-probe" "$stage/gow3_pc/out/gpu/libgow3gpu.so"; do
-    ldd "$elf" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}'
+    LD_LIBRARY_PATH=$build_dirs${LD_LIBRARY_PATH:-} ldd "$elf" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}'
 done | sort -u | while read -r soname path; do
     [[ $soname =~ $system_lib || $soname == libgow3gpu.so ]] && continue
     case $soname in libstdc++.so*)
@@ -71,7 +77,7 @@ for so in "$stage"/gow3_pc/out/lib/*.so*; do
     patchelf --set-rpath '$ORIGIN' "$so"
     chmod 644 "$so"
 done
-libraries=$(ldd "$stage/gow3_pc/out/gow3-probe")
+libraries=$(env -u LD_LIBRARY_PATH ldd "$stage/gow3_pc/out/gow3-probe")
 echo "Libraries the runtime loads (gow3_pc/out/lib ships with it):"
 echo "$libraries" | sed 's/^/  /'
 if [[ $libraries == *'not found'* ]]; then
