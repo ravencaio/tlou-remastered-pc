@@ -102,6 +102,14 @@ echo "Needs glibc $glibc or newer"
 max_glibc=${GOW3_MAX_GLIBC:-2.41}
 if [[ $(printf '%s\n%s\n' "$glibc" "$max_glibc" | sort -V | tail -1) != "$max_glibc" ]]; then
     echo "The package needs glibc $glibc, newer than $max_glibc (Steam Deck): it would not start there" >&2
+    # Which file asks for which newer symbol.
+    find "$stage/gow3_pc/out" -type f \( -name '*.so*' -o -name gow3-probe \) | while read -r elf; do
+        objdump -T "$elf" 2>/dev/null | awk -v f="${elf##*/}" -v max="$max_glibc" '
+            match($0, /GLIBC_[0-9.]+/) {
+                v = substr($0, RSTART + 6, RLENGTH - 6); split(v, a, "."); split(max, b, ".")
+                if (a[1] * 1000 + a[2] > b[1] * 1000 + b[2]) print "  " f ": " $NF " (GLIBC_" v ")"
+            }'
+    done >&2
     exit 1
 fi
 
