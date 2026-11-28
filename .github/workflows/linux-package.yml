@@ -76,7 +76,14 @@ jobs:
       - name: Package
         env:
           PKG_CONFIG_PATH: /opt/ffmpeg-min/lib/pkgconfig
-        run: bash tools/package_linux.sh --no-build
+        shell: bash
+        run: |
+          # On failure the log's end becomes the run's annotation (readable without signing in).
+          set -o pipefail
+          if ! bash tools/package_linux.sh --no-build 2>&1 | tee package.log; then
+            echo "::error title=Package::$(tail -40 package.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          fi
 
       - name: Check the package against the updater
         run: |
