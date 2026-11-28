@@ -57,7 +57,9 @@ jobs:
       - name: Build a small FFmpeg to ship
         run: |
           # The FFmpeg release Arch currently packages: the port builds against its API.
-          version=$(pacman -Si ffmpeg | awk -F': *' '/^Version/ {print $2}' | sed 's/^[0-9]*://; s/-[0-9.]*$//')
+          # "Version : 2:9.0-1" -> 9.0 (no epoch, no package release).
+          version=$(pacman -Si ffmpeg | sed -n 's/^Version *: *//p' | head -1 | sed 's/^[0-9]*://; s/-[^-]*$//')
+          echo "FFmpeg $version"
           bash tools/build_ffmpeg_min.sh "$version" /opt/ffmpeg-min
 
       - name: Build the runtime
