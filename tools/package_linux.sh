@@ -93,13 +93,17 @@ outside=$(echo "$libraries" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}' |
 if [[ -n $outside ]]; then
     echo "Libraries loaded from the building system but not shipped: $outside" >&2; exit 1
 fi
+# The Steam Deck's glibc (SteamOS 3.7: 2.41) is the floor; GOW3_MAX_GLIBC raises it on purpose.
+max_glibc=${GOW3_MAX_GLIBC:-2.41}
+# glibc 2.43/2.44 versioned sqrtf, atan2f, sinh, ... anew: those requirements point back to
+# the original math functions, which every glibc has (tools/glibc_floor.py).
+find "$stage/gow3_pc/out" -type f \( -name '*.so*' -o -name gow3-probe \) -print0 |
+    xargs -0 python3 -I tools/glibc_floor.py "$max_glibc"
 # The oldest glibc the package runs on: the highest GLIBC_ symbol version any shipped program
-# or library asks for (SteamOS 3.7: glibc 2.41).
+# or library asks for.
 glibc=$(find "$stage/gow3_pc/out" -type f \( -name '*.so*' -o -name gow3-probe \) -exec objdump -T {} + 2>/dev/null |
     grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
 echo "Needs glibc $glibc or newer"
-# The Steam Deck's glibc (SteamOS 3.7: 2.41) is the floor; GOW3_MAX_GLIBC raises it on purpose.
-max_glibc=${GOW3_MAX_GLIBC:-2.41}
 if [[ $(printf '%s\n%s\n' "$glibc" "$max_glibc" | sort -V | tail -1) != "$max_glibc" ]]; then
     echo "The package needs glibc $glibc, newer than $max_glibc (Steam Deck): it would not start there" >&2
     # Which file asks for which newer symbol.
