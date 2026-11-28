@@ -425,6 +425,40 @@ def aspect_patch(size):
     return changes
 
 
+def package_login_batch_patch():
+    """Finish each package's login callbacks during the blocking loading screen."""
+    import struct
+
+    site = 0xA558B2
+    stub = 0x91  # Zero-filled padding between the first two functions.
+    screen_state = 0x1519A70  # loadingscreen.cpp's state, at +0x10 in the object.
+    next_callback = 0xA5584A
+    notify_listeners = 0xA558BD
+    return_to_scheduler = 0xA558EC
+
+    def rel32(after, target):
+        return struct.pack("<i", target - after).hex().upper()
+
+    # DoLogin processes one entry per call. Keep the original callback and listener
+    # order, and reload the table on each iteration. States 1 and 2 are the active
+    # loading screen. The scheduler still processes one entry in other states.
+    code = (
+        "39D07F20750C"                                    # cmp eax,edx; jg return; jne check screen
+        "498B9E702D0000"                                  # Original listener-list load
+        "E9" + rel32(stub + 18, notify_listeners)
+        + "8B0D" + rel32(stub + 24, screen_state)         # mov ecx,[screen_state]
+        + "83E90183F901"                                  # sub ecx,1; cmp ecx,1
+        + "0F86" + rel32(stub + 36, next_callback)        # jbe next callback
+        + "E9" + rel32(stub + 41, return_to_scheduler)
+    )
+    return [
+        (0x3E31, "488D3D285C5101", None),  # Loading-screen object reference
+        (next_callback, "498BB728020000498B4F08", None),
+        (stub, "00" * (len(code) // 2), code),
+        (site, "39D07536498B9E702D0000", "E9" + rel32(site + 5, stub) + "90" * 6),
+    ]
+
+
 # Fixes, on in every run.
 FIXES = {
     # 23 Oct 2026 (the house, after the autosave before the basement): the renderer's frame
@@ -702,7 +736,10 @@ def main():
     # TLOU_CHEATS=<name>,...: the cheats above (default: flashlight, unless flashlight_fix=0 in
     # tlou.ini; "none": no cheats).
     # TLOU_FIXES=none leaves out the fixes.
-    patches = dict(FIXES) if os.environ.get("TLOU_FIXES") != "none" else {}
+    fixes_enabled = os.environ.get("TLOU_FIXES") != "none"
+    patches = dict(FIXES) if fixes_enabled else {}
+    if fixes_enabled and os.environ.get("TLOU_FAST_LOADING") != "0":
+        patches["package-login-batch"] = package_login_batch_patch()
     if os.environ.get("TLOU_JOB_SLEEP") != "0":
         patches["job-sleep"] = JOB_SLEEP + job_sleep_wait_patch()
     if os.environ.get("TLOU_PRO_SHADOWS") != "0":
