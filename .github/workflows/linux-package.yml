@@ -113,7 +113,11 @@ jobs:
             echo "::warning::tools/VERSION is $version, the tag is $TAG"
 
       - name: Smoke test the packaged launcher and Python
+        shell: bash
         run: |
+          # On failure the log's end becomes the run's annotation (readable without signing in).
+          cat > "$RUNNER_TEMP/smoke.sh" <<'SMOKE'
+          set -e
           cd dist/TLOU-Remastered-linux
           python/bin/python3 -c "import tkinter, PIL, ssl, sqlite3; print('python', tkinter.TkVersion, PIL.__version__)"
           PYTHONPATH=gow3_pc/out/pydeps python/bin/python3 -c "import iced_x86; print('iced_x86 ok')"
@@ -128,9 +132,16 @@ jobs:
           if [ -n "$missing" ]; then echo "$missing"; exit 1; fi
           python/bin/python3 -c "import tkinter, PIL.Image, ssl, sqlite3, ctypes, zlib; print('python modules ok')"
           echo "runtime libraries ok"
+          SMOKE
+          set -o pipefail
+          if ! bash "$RUNNER_TEMP/smoke.sh" 2>&1 | tee smoke.log; then
+            echo "::error title=Smoke test::$(tail -40 smoke.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          fi
 
       - name: Keep a test build as the run's artifact
-        if: github.event_name == 'push'
+        # Also after a failed smoke test: the test build can still be tried by hand.
+        if: ${{ !cancelled() && github.event_name == 'push' && hashFiles('dist/TLOU-Remastered-linux.zip') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: TLOU-Remastered-linux
