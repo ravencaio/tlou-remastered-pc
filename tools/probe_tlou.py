@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -19,6 +20,46 @@ import gow3_data   # tools/gow3_data.py: the player data's root folder (GOW3_DAT
 
 ROOT = Path(__file__).resolve().parent.parent
 UPDATE_SUFFIXES = ("-patch", "-update")
+PREORDER_SKIN_IDS = {
+    b"UP9000-CUSA00552_00-PROMOELLIESKIN01": "PROMOELLIESKIN01",
+    b"UP9000-CUSA00552_00-PROMOJOELSKIN001": "PROMOJOELSKIN001",
+}
+
+
+def preorder_skin_labels(game):
+    """Read the IDs of the two data-free preorder DLCs from the installed PKG headers."""
+    labels = set()
+    for package in (game / "dlc").glob("*.pkg"):
+        try:
+            with package.open("rb") as stream:
+                header = stream.read(0x78)
+        except OSError as error:
+            print(f"Could not read DLC package {package.name}: {error}")
+            continue
+        if len(header) != 0x78 or header[:4] != b"\x7fCNT":
+            continue
+        label = PREORDER_SKIN_IDS.get(header[0x40:0x70].rstrip(b"\0"))
+        if label and int.from_bytes(header[0x74:0x78], "big") == 0x1B:
+            labels.add(label)
+    return sorted(labels)
+
+
+def preorder_skin_refresh_patch():
+    """Refresh the game's two preorder entitlement bits when the campaign queries them."""
+    # The 1.11 image has zero-filled space in its executable segment at the stub address.
+    check, refresh, stub = 0x6EF60, 0x6EE60, 0x1459C00
+    original = bytes.fromhex("4863C6800F0848C1E806488B04C7480FA3F00F92C0C3")
+    # Campaign DLC IDs 1 and 2 are Joel and Ellie. Call the game's own AppContent
+    # refresh for that ID, preserving the original arguments for the bit test.
+    code = bytes.fromhex("83FE01740583FE02751157564883EC08E8")
+    code += struct.pack("<i", refresh - (stub + len(code) + 4))
+    code += bytes.fromhex("4883C4085E5F") + original
+    jump = b"\xe9" + struct.pack("<i", stub - (check + 5))
+    return [
+        (check, original.hex(), jump.hex()),
+        (refresh, "554889E5415741564155415453504989FE488D3DF08D68014189F7E8B0C89300BF7356A7D2", None),
+        (stub, "00" * len(code), code.hex()),
+    ]
 
 
 def find_update(game):
@@ -444,7 +485,6 @@ def image_patches(elf_path, out_path, patches, applied=None):
     the runtime's --patches (src/probe.c apply_patches) and returns its path, or None. A change
     whose original bytes are not in this executable (another version) is left out with a message.
     The names of the changes written are added to `applied`."""
-    import struct
     elf = elf_path.read_bytes()
     phoff, = struct.unpack_from("<Q", elf, 0x20)
     phentsize, phnum = struct.unpack_from("<HH", elf, 0x36)
@@ -573,6 +613,11 @@ def main():
         print("ISA emulation active for: " + ", ".join(isa_names))
 
     env = dict(os.environ)
+    preorder_skins = preorder_skin_labels(game)
+    if preorder_skins:
+        configured = env.get("GOW3_ADDCONT", "").split(",")
+        env["GOW3_ADDCONT"] = ",".join(dict.fromkeys(preorder_skins + [label for label in configured if label]))
+        print(f"Preorder skin DLCs detected: {', '.join(preorder_skins)}")
     if isa_names and not cpu_features.missing_blocking():
         env["GOW3_CPU_CHECK"] = "0"           # the runtime would stop on the sets that are emulated now
     # The Windows runtime links against MSYS2 CLANG64's own DLLs (libstdc++ and friends),
@@ -703,6 +748,8 @@ def main():
     # tlou.ini; "none": no cheats).
     # TLOU_FIXES=none leaves out the fixes.
     patches = dict(FIXES) if os.environ.get("TLOU_FIXES") != "none" else {}
+    if preorder_skins:
+        patches["preorder-skin-refresh"] = preorder_skin_refresh_patch()
     if os.environ.get("TLOU_JOB_SLEEP") != "0":
         patches["job-sleep"] = JOB_SLEEP + job_sleep_wait_patch()
     if os.environ.get("TLOU_PRO_SHADOWS") != "0":
