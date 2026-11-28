@@ -362,7 +362,12 @@ def render_size_patch(size, extra_mib):
                (0x116BFDC, d(RENDER_DEFAULT[1]), d(size[1]))]
     if extra_mib:
         extra = extra_mib << 20
-        small = min(extra, 88 << 20)   # the first render target heap: 42 -> at most the Pro's 130 MiB
+        # The two render target heaps share the extra as in the Pro's map (+88 and +512 MiB), the
+        # first one at most the Pro's 130 MiB, in 2 MiB steps. Giving the first one up to 88 MiB
+        # before the second got any (crash_fsr3.log: 3200x1800 with FSR Quality draws 2128x1200,
+        # extra 128 MiB, 88 of them to the first heap) left the second, the "Render Target Heap",
+        # 9 MiB short at boot.
+        small = min(extra * 88 // 600, 88 << 20) & ~((2 << 20) - 1)
         total = 0x120000000 + extra
         changes += [(0x2F5E44, "48BA" + q(0x120000000), "48BA" + q(total)),
                     (0x10B36, "49BC" + q(0x120000000), "49BC" + q(total)),
