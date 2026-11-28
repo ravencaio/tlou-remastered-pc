@@ -66,6 +66,7 @@ done
 for elf in "$stage/gow3_pc/out/gow3-probe" "$stage/gow3_pc/out/gpu/libgow3gpu.so"; do
     LD_LIBRARY_PATH=$build_dirs${LD_LIBRARY_PATH:-} ldd "$elf" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}'
 done | sort -u | while read -r soname path; do
+    soname=${soname##*/}   # the loader is listed by path: /lib64/ld-linux-x86-64.so.2
     [[ $soname =~ $system_lib || $soname == libgow3gpu.so ]] && continue
     case $soname in libstdc++.so*)
         echo "$soname comes from the building system: build with GOW3_PORTABLE=1" >&2; exit 1;;
@@ -87,7 +88,7 @@ fi
 # would show here too.
 outside=$(echo "$libraries" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}' |
     while read -r soname path; do
-        [[ $path == "$stage/"* || $soname =~ $system_lib ]] || echo "$soname"
+        [[ $path == "$stage/"* || ${soname##*/} =~ $system_lib ]] || echo "$soname"
     done)
 if [[ -n $outside ]]; then
     echo "Libraries loaded from the building system but not shipped: $outside" >&2; exit 1
