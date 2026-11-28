@@ -4,11 +4,10 @@ PORTUGUÊS
 
 Este pacote NÃO traz nenhum arquivo do jogo. Você precisa da sua própria cópia descriptografada.
 
-Requisitos: Linux de 64 bits, placa de vídeo com driver Vulkan 1.3 (Mesa ou NVIDIA) e estas
-bibliotecas da distribuição: o carregador Vulkan, SDL3, FFmpeg, fmt, Zydis, xxHash e X11. O
-pacote foi montado no Arch Linux e precisa das mesmas versões; licenses/THIRD-PARTY.txt lista as
-bibliotecas exatas. No Arch:
-  sudo pacman -S --needed vulkan-icd-loader sdl3 ffmpeg fmt zydis xxhash libx11
+Requisitos: Linux de 64 bits (SteamOS do Steam Deck incluído) e placa de vídeo com driver
+Vulkan 1.3 (Mesa ou NVIDIA). Não precisa instalar nada: FFmpeg, SDL3, o carregador Vulkan, X11
+e as outras bibliotecas do jogo vêm no pacote (gow3_pc/out/lib). Do sistema ele usa só a glibc
+(2.41 ou mais nova) e o driver de vídeo. licenses/THIRD-PARTY.txt lista tudo.
 Não precisa instalar Python.
 
 1. Extraia o zip em uma pasta com bastante espaço livre.
@@ -28,11 +27,10 @@ ENGLISH
 
 This package has NO game files. You need your own decrypted copy of the game.
 
-Requirements: 64-bit Linux, a graphics card with a Vulkan 1.3 driver (Mesa or NVIDIA) and these
-libraries of your distribution: the Vulkan loader, SDL3, FFmpeg, fmt, Zydis, xxHash and X11. The
-package was built on Arch Linux and needs the same versions; licenses/THIRD-PARTY.txt lists the
-exact libraries. On Arch:
-  sudo pacman -S --needed vulkan-icd-loader sdl3 ffmpeg fmt zydis xxhash libx11
+Requirements: 64-bit Linux (SteamOS on the Steam Deck included) and a graphics card with a
+Vulkan 1.3 driver (Mesa or NVIDIA). Nothing to install: FFmpeg, SDL3, the Vulkan loader, X11 and
+the game's other libraries come with the package (gow3_pc/out/lib). From the system it uses only
+glibc (2.41 or newer) and the graphics driver. licenses/THIRD-PARTY.txt lists them all.
 No Python install is needed.
 
 1. Extract the zip to a folder with plenty of free space.

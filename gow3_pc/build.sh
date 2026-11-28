@@ -83,8 +83,9 @@ for patch in gpu/patches/fsr-vulkan/*.patch; do
         git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
     fi
 done
+# GOW3_PORTABLE=ON (tools/package_linux.sh): the C++ runtime and fmt built into libgow3gpu.so.
 cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DGOW3_PGO="$pgo" \
-    -DGOW3_LTO="${GOW3_LTO:-ON}" -DGOW3_PGO_DIR="$PWD/pgo" >/dev/null
+    -DGOW3_LTO="${GOW3_LTO:-ON}" -DGOW3_PGO_DIR="$PWD/pgo" -DGOW3_PORTABLE="${GOW3_PORTABLE:-OFF}" >/dev/null
 echo "GPU library: PGO $pgo, LTO ${GOW3_LTO:-ON}"
 # A failed GPU build must stop here: an older libgow3gpu.so would otherwise be used silently.
 if ! ninja -C out/gpu gow3gpu > out/gpu-build.log 2>&1; then

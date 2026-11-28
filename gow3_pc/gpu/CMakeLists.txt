@@ -18,6 +18,9 @@ add_compile_options(-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=gpu)
 # profile). Covers gow3gpu and the static libraries linked into it. No -march: the same build
 # runs on the Steam Deck.
 option(GOW3_LTO "Link-time optimization of gow3gpu" ON)
+# Linux release package (tools/package_linux.sh): no libstdc++/libgcc_s or libfmt from the
+# building system, whose newer versions are not on other distributions (Steam Deck).
+option(GOW3_PORTABLE "Static C++ runtime and header-only fmt in gow3gpu (Linux package)" OFF)
 set(GOW3_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
 set(GOW3_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
 if (GOW3_LTO)
@@ -196,7 +199,14 @@ if (NOT WIN32)
     target_link_options(gow3gpu PRIVATE -Wl,--allow-shlib-undefined)
 endif()
 target_link_libraries(gow3gpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
-target_link_libraries(gow3gpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
+if (GOW3_PORTABLE)
+    set(GOW3_FMT fmt::fmt-header-only)
+    # --exclude-libs: its copy of libstdc++ stays private, not seen by a Vulkan driver's own.
+    target_link_options(gow3gpu PRIVATE -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL)
+else()
+    set(GOW3_FMT fmt::fmt)
+endif()
+target_link_libraries(gow3gpu PUBLIC Vulkan::Headers ${GOW3_FMT} Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
 target_include_directories(gow3gpu PRIVATE third_party/xbyak)
 if (WIN32)

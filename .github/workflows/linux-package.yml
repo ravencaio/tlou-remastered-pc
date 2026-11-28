@@ -38,9 +38,10 @@ jobs:
     steps:
       - name: Build tools and libraries (README, Building > Linux)
         run: |
-          pacman -Syu --noconfirm --needed git cmake ninja pkgconf python zip unzip github-cli patchelf \
+          # No ffmpeg package: the package ships a small FFmpeg of its own (tools/build_ffmpeg_min.sh).
+          pacman -Syu --noconfirm --needed git cmake ninja pkgconf python zip unzip github-cli patchelf nasm \
             vulkan-headers vulkan-icd-loader \
-            sdl3 ffmpeg fmt boost robin-map xxhash libx11 zydis glslang
+            sdl3 fmt boost robin-map xxhash libx11 zydis glslang
           # Arch has no package of the Vulkan Memory Allocator: its single header, at a release tag.
           mkdir -p /usr/local/include/vma
           curl -fsSL --retry 3 -o /usr/local/include/vma/vk_mem_alloc.h \
@@ -53,7 +54,16 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Build a small FFmpeg to ship
+        run: |
+          # The FFmpeg release Arch currently packages: the port builds against its API.
+          version=$(pacman -Si ffmpeg | awk -F': *' '/^Version/ {print $2}' | sed 's/^[0-9]*://; s/-[0-9.]*$//')
+          bash tools/build_ffmpeg_min.sh "$version" /opt/ffmpeg-min
+
       - name: Build the runtime
+        env:
+          PKG_CONFIG_PATH: /opt/ffmpeg-min/lib/pkgconfig
+          GOW3_PORTABLE: "1"
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # The GPU library compiles by absolute path: keep the runner's path out of the asserts.
@@ -62,6 +72,8 @@ jobs:
           ls -la gow3_pc/out/gow3-probe
 
       - name: Package
+        env:
+          PKG_CONFIG_PATH: /opt/ffmpeg-min/lib/pkgconfig
         run: bash tools/package_linux.sh --no-build
 
       - name: Check the package against the updater
@@ -97,6 +109,16 @@ jobs:
           python/bin/python3 -c "import tkinter, PIL, ssl, sqlite3; print('python', tkinter.TkVersion, PIL.__version__)"
           PYTHONPATH=gow3_pc/out/pydeps python/bin/python3 -c "import iced_x86; print('iced_x86 ok')"
           python/bin/python3 tools/run_game.py --help > /dev/null && echo "run_game.py ok"
+          # With every library the package ships removed from the system (as on a Steam Deck,
+          # which has few of Arch's current ones), the runtime's still resolve, from
+          # gow3_pc/out/lib, and so do Python's modules.
+          pacman -Rdd --noconfirm sdl3 fmt zydis xxhash vulkan-icd-loader libx11 libxcb libxau libxdmcp
+          ldd gow3_pc/out/gow3-probe
+          missing=$( { ldd gow3_pc/out/gow3-probe gow3_pc/out/gpu/libgow3gpu.so gow3_pc/out/lib/*.so* \
+            python/bin/python3 python/lib/python3.*/lib-dynload/*.so; } 2>&1 | grep -B20 'not found' || true)
+          if [ -n "$missing" ]; then echo "$missing"; exit 1; fi
+          python/bin/python3 -c "import tkinter, PIL.Image, ssl, sqlite3, ctypes, zlib; print('python modules ok')"
+          echo "runtime libraries ok"
 
       - name: Keep a test build as the run's artifact
         if: github.event_name == 'push'

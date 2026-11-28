@@ -6,10 +6,14 @@
 #   python/              a standalone CPython with Tkinter (python-build-standalone) and Pillow
 #   launcher/ tools/     the launcher and the start script (tools/probe_tlou.py)
 #   gow3_pc/scripts/     the preparation scripts; gow3_pc/out/ the runtime and libgow3gpu.so
-# The runtime links the distribution's own Vulkan loader, SDL3 and FFmpeg: they do not ship
-# (licenses/THIRD-PARTY.txt lists them), so the package runs where those libraries have the
-# sonames of the system it was built on. No game file ships (tools/package_check.py).
-# Run in the repository on Linux. --no-build uses the runtime already in gow3_pc/out.
+#   gow3_pc/out/lib/     every library the runtime needs beyond the system's own (FFmpeg, SDL3,
+#                        Zydis, xxHash, the Vulkan loader, X11): the package does not depend on
+#                        the distribution's versions of them (a Steam Deck has few of Arch's)
+# The system provides glibc, the C++ runtime, the graphics driver and what SDL3 opens itself
+# (licenses/THIRD-PARTY.txt lists both sets). No game file ships (tools/package_check.py).
+# Run in the repository on Linux. --no-build uses the runtime already in gow3_pc/out; build it
+# with GOW3_PORTABLE=1 and PKG_CONFIG_PATH on tools/build_ffmpeg_min.sh's FFmpeg, as the release
+# workflow does (a build with the distribution's FFmpeg ships all of FFmpeg's own dependencies).
 # .github/workflows/linux-package.yml runs it for each release in an Arch Linux container.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
@@ -23,7 +27,7 @@ if [[ ${1:-} != --no-build ]]; then
     # The GPU library's sources are compiled by absolute path: keep this checkout's path out of
     # the asserts' file names (package_check.py refuses paths of the building machine).
     export CFLAGS="${CFLAGS:-} -ffile-prefix-map=$PWD=." CXXFLAGS="${CXXFLAGS:-} -ffile-prefix-map=$PWD=."
-    bash gow3_pc/build.sh
+    GOW3_PORTABLE=1 bash gow3_pc/build.sh
 fi
 [[ -x gow3_pc/out/gow3-probe && -f gow3_pc/out/gpu/libgow3gpu.so ]] || {
     echo 'Build the runtime first: gow3_pc/build.sh' >&2; exit 1; }
@@ -31,7 +35,7 @@ for tool in patchelf strip zip; do
     command -v "$tool" >/dev/null || { echo "Need $tool" >&2; exit 1; }
 done
 
-stage=dist/stage/$name
+stage=$PWD/dist/stage/$name   # absolute: ldd then prints the shipped libraries by full path
 rm -rf -- dist/stage
 mkdir -p "$stage/gow3_pc/out/gpu" "$stage/gow3_pc/out/pydeps" "$stage/gow3_pc/scripts" "$stage/tools" \
     "$stage/launcher" downloads
@@ -40,14 +44,58 @@ mkdir -p "$stage/gow3_pc/out/gpu" "$stage/gow3_pc/out/pydeps" "$stage/gow3_pc/sc
 # checkout's out/gpu: the package keeps only $ORIGIN/gpu.
 strip --strip-debug -o "$stage/gow3_pc/out/gow3-probe" gow3_pc/out/gow3-probe
 strip --strip-debug -o "$stage/gow3_pc/out/gpu/libgow3gpu.so" gow3_pc/out/gpu/libgow3gpu.so
-patchelf --set-rpath '$ORIGIN/gpu' "$stage/gow3_pc/out/gow3-probe"
-patchelf --remove-rpath "$stage/gow3_pc/out/gpu/libgow3gpu.so"
+patchelf --set-rpath '$ORIGIN/lib:$ORIGIN/gpu' "$stage/gow3_pc/out/gow3-probe"
+patchelf --set-rpath '$ORIGIN/../lib' "$stage/gow3_pc/out/gpu/libgow3gpu.so"
 chmod 755 "$stage/gow3_pc/out/gow3-probe"
+
+# Libraries that ship in gow3_pc/out/lib: every one the runtime loads (FFmpeg, SDL3, Zydis,
+# xxHash, the Vulkan loader, X11/xcb, ...) except those that must be the system's own: glibc,
+# the graphics driver's (GL/EGL/DRM) and what SDL3 opens itself (Wayland, audio, udev, D-Bus).
+# A distribution's libraries change soname from one release to the next: SteamOS (Steam Deck)
+# has few of Arch's current ones. The release workflow builds FFmpeg small
+# (tools/build_ffmpeg_min.sh) and the C++ runtime into libgow3gpu.so (GOW3_PORTABLE), so the
+# system's libstdc++ stays the one its Vulkan driver needs (libgcc_s, always there, too).
+system_lib='^(linux-vdso|ld-linux[a-z0-9-]*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libmvec|libgcc_s|libGL|libEGL|libGLX|libGLdispatch|libOpenGL|libgbm|libdrm[a-z_]*|libwayland-[a-z]*|libxkbcommon[a-z0-9-]*|libdecor-[0-9]*|libasound|libpulse[a-z-]*|libpipewire-[0-9.]*|libjack|libudev|libdbus-1)\.so'
+mkdir -p "$stage/gow3_pc/out/lib"
+for elf in "$stage/gow3_pc/out/gow3-probe" "$stage/gow3_pc/out/gpu/libgow3gpu.so"; do
+    ldd "$elf" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}'
+done | sort -u | while read -r soname path; do
+    [[ $soname =~ $system_lib || $soname == libgow3gpu.so ]] && continue
+    case $soname in libstdc++.so*)
+        echo "$soname comes from the building system: build with GOW3_PORTABLE=1" >&2; exit 1;;
+    esac
+    cp -L -- "$path" "$stage/gow3_pc/out/lib/$soname"
+done
+for so in "$stage"/gow3_pc/out/lib/*.so*; do
+    strip --strip-unneeded "$so"
+    patchelf --set-rpath '$ORIGIN' "$so"
+    chmod 644 "$so"
+done
 libraries=$(ldd "$stage/gow3_pc/out/gow3-probe")
-echo "Libraries the runtime loads from the system:"
+echo "Libraries the runtime loads (gow3_pc/out/lib ships with it):"
 echo "$libraries" | sed 's/^/  /'
 if [[ $libraries == *'not found'* ]]; then
     echo 'The packaged runtime has unresolved libraries' >&2; exit 1
+fi
+# What is not shipped must be a system library; a missing ldd of a bundled one's dependency
+# would show here too.
+outside=$(echo "$libraries" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}' |
+    while read -r soname path; do
+        [[ $path == "$stage/"* || $soname =~ $system_lib ]] || echo "$soname"
+    done)
+if [[ -n $outside ]]; then
+    echo "Libraries loaded from the building system but not shipped: $outside" >&2; exit 1
+fi
+# The oldest glibc the package runs on: the highest GLIBC_ symbol version any shipped program
+# or library asks for (SteamOS 3.7: glibc 2.41).
+glibc=$(find "$stage/gow3_pc/out" -type f \( -name '*.so*' -o -name gow3-probe \) -exec objdump -T {} + 2>/dev/null |
+    grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+echo "Needs glibc $glibc or newer"
+# The Steam Deck's glibc (SteamOS 3.7: 2.41) is the floor; GOW3_MAX_GLIBC raises it on purpose.
+max_glibc=${GOW3_MAX_GLIBC:-2.41}
+if [[ $(printf '%s\n%s\n' "$glibc" "$max_glibc" | sort -V | tail -1) != "$max_glibc" ]]; then
+    echo "The package needs glibc $glibc, newer than $max_glibc (Steam Deck): it would not start there" >&2
+    exit 1
 fi
 
 # The Python that runs the launcher and the scripts.
@@ -98,8 +146,8 @@ cp tools/VERSION "$stage/VERSION"
 cp gow3_pc/packaging/linux/README-player.txt "$stage/README.txt"
 cp gow3_pc/LICENSE "$stage/LICENSE.txt"
 
-# Licenses of the sources built into the runtime, of the Python that ships, and the list of the
-# system libraries the runtime needs (not shipped).
+# Licenses of the sources built into the runtime, of the libraries and the Python that ship, and
+# the list of the system libraries the runtime needs (not shipped).
 licenses=$stage/licenses
 mkdir -p "$licenses/python"
 for dir in gow3_pc/gpu/third_party/* gow3_pc/third_party/*; do
@@ -110,17 +158,50 @@ for dir in gow3_pc/gpu/third_party/* gow3_pc/third_party/*; do
     done
 done
 cp "$lib/LICENSE.txt" "$licenses/python/LICENSE.txt"
-{
-    echo "The runtime (gow3_pc/out/gow3-probe) uses these libraries of the system; they do not ship."
-    echo "Built on: $(. /etc/os-release && echo "$PRETTY_NAME")"
-    echo
-    echo "$libraries" | awk '$3 ~ /^\// && $1 !~ /libgow3gpu/ {print $1}' | sort -u
-    if command -v pacman >/dev/null; then
-        echo
-        echo "Arch Linux packages that provide them:"
-        echo "$libraries" | awk '$3 ~ /^\// && $1 !~ /libgow3gpu/ {print $3}' | sort -u |
-            { xargs pacman -Qqo 2>/dev/null || true; } | sort -u | xargs -r pacman -Q
+# The shipped libraries' licenses: Arch's package of each (/usr/share/licenses), FFmpeg's from
+# tools/build_ffmpeg_min.sh's prefix.
+shipped=$(echo "$libraries" | awk -v dir="$stage/gow3_pc/out/lib/" 'index($3, dir) == 1 {print $1}' | sort -u)
+system=$(echo "$libraries" | awk '$2 == "=>" && $3 ~ /^\// {print $1, $3}' | grep -v -F "$stage/" | sort -u)
+origins=
+for soname in $shipped; do
+    # The Arch package of the system copy it was taken from.
+    source=$(ldconfig -p 2>/dev/null | awk -v n="$soname" '$1 == n {print $NF; exit}')
+    owner=
+    if [[ -n $source ]] && command -v pacman >/dev/null; then
+        owner=$({ pacman -Qo "$source" 2>/dev/null || true; } | awk '{print $(NF-1), $NF}')
     fi
+    if [[ -n $owner ]]; then
+        origins+="  $soname: Arch $owner"$'
+'
+        if [[ -d /usr/share/licenses/${owner% *} ]]; then
+            mkdir -p "$licenses/${owner% *}"
+            cp -rL /usr/share/licenses/"${owner% *}"/. "$licenses/${owner% *}/"
+        fi
+    else
+        origins+="  $soname"$'
+'
+    fi
+done
+ffmpeg_source=
+if [[ $shipped == *libavcodec* ]]; then
+    ffmpeg_prefix=$(pkg-config --variable=prefix libavcodec)
+    if [[ -f $ffmpeg_prefix/share/licenses/ffmpeg/SOURCE ]]; then
+        mkdir -p "$licenses/ffmpeg"
+        cp "$ffmpeg_prefix"/share/licenses/ffmpeg/* "$licenses/ffmpeg/"
+        ffmpeg_source=$(cat "$licenses/ffmpeg/SOURCE")
+    fi
+fi
+{
+    echo "Built on: $(. /etc/os-release && echo "$PRETTY_NAME"); needs glibc $glibc or newer."
+    echo
+    echo "Libraries that ship in gow3_pc/out/lib (their licenses are in this folder):"
+    printf '%s' "$origins"
+    if [[ -n $ffmpeg_source ]]; then
+        echo "  FFmpeg's (LGPL 2.1, decoders only) were built from $ffmpeg_source"
+    fi
+    echo
+    echo "Libraries of the system the runtime uses; they do not ship:"
+    echo "$system" | awk '{print "  " $1}'
     echo
     echo "python/: CPython from https://github.com/astral-sh/python-build-standalone ($python_url),"
     echo "with Pillow; their licenses are in python/ and licenses/python."
